@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://gracebanquet.pk/sitemap.xml
