@@ -1174,8 +1174,8 @@ p { margin: 0 0 1rem; }
 
 /* --------------------------------------------------------------------------
    23. MENU FLIP CARDS
-   Front shows the category; back lists the dishes. Flips on hover where a
-   pointer exists, and on tap / Enter / Space everywhere (js/main.js).
+   Front shows the category; back lists the dishes. Flips on click / tap /
+   Enter / Space only (toggled in js/main.js) — no hover flip.
    -------------------------------------------------------------------------- */
 .flip-card {
   perspective: 1200px;
@@ -1193,9 +1193,6 @@ p { margin: 0 0 1rem; }
   transition: transform 0.6s var(--ease);
 }
 .flip-card.flipped .flip-inner { transform: rotateY(180deg); }
-@media (hover: hover) {
-  .flip-card:hover .flip-inner { transform: rotateY(180deg); }
-}
 
 .flip-front,
 .flip-back {
@@ -1282,8 +1279,4 @@ p { margin: 0 0 1rem; }
   .flip-back { opacity: 0; pointer-events: none; }
   .flip-card.flipped .flip-back { opacity: 1; pointer-events: auto; }
   .flip-card.flipped .flip-front { opacity: 0; }
-  @media (hover: hover) {
-    .flip-card:hover .flip-back { opacity: 1; pointer-events: auto; }
-    .flip-card:hover .flip-front { opacity: 0; }
-  }
 }
