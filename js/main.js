@@ -264,6 +264,24 @@
   }
 
   /* ---------------------------------------------------------------
+     Menu flip cards — tap / Enter / Space toggles; hover handled in CSS
+     --------------------------------------------------------------- */
+  var flipCards = document.querySelectorAll('.flip-card');
+  flipCards.forEach(function (card) {
+    function toggle() {
+      var on = card.classList.toggle('flipped');
+      card.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    card.addEventListener('click', toggle);
+    card.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  });
+
+  /* ---------------------------------------------------------------
      Footer year
      --------------------------------------------------------------- */
   var yr = document.getElementById('year');

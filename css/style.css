@@ -1171,3 +1171,119 @@ p { margin: 0 0 1rem; }
 @media (max-width: 900px) {
   .enquiry-aside { position: static; }
 }
+
+/* --------------------------------------------------------------------------
+   23. MENU FLIP CARDS
+   Front shows the category; back lists the dishes. Flips on hover where a
+   pointer exists, and on tap / Enter / Space everywhere (js/main.js).
+   -------------------------------------------------------------------------- */
+.flip-card {
+  perspective: 1200px;
+  min-height: 360px;
+  cursor: pointer;
+  outline-offset: 4px;
+}
+
+.flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  transform-style: preserve-3d;
+  transition: transform 0.6s var(--ease);
+}
+.flip-card.flipped .flip-inner { transform: rotateY(180deg); }
+@media (hover: hover) {
+  .flip-card:hover .flip-inner { transform: rotateY(180deg); }
+}
+
+.flip-front,
+.flip-back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: var(--radius);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+}
+
+.flip-front {
+  background: var(--navy-800);
+  color: var(--cream-100);
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-top: 2px solid var(--gold-500);
+}
+.flip-front h3 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.25rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--white);
+}
+.flip-front p {
+  font-size: 0.875rem;
+  color: var(--cream-300);
+  max-width: 26ch;
+  margin: 0;
+}
+.flip-front .divider { margin: var(--space-sm) auto; width: 70px; }
+.flip-kicker {
+  font-family: var(--font-display);
+  font-weight: 200;
+  font-size: 2rem;
+  color: var(--gold-400);
+  margin-bottom: 0.25rem;
+}
+.flip-hint {
+  margin-top: var(--space-sm);
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold-500);
+}
+
+.flip-back {
+  background: var(--white);
+  transform: rotateY(180deg);
+  border-top: 2px solid var(--gold-500);
+  overflow-y: auto;
+}
+.flip-back h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold-500);
+  margin-bottom: 0.75rem;
+}
+.flip-back ul { flex: 1; }
+.flip-back li {
+  padding-block: 0.375rem;
+  font-size: 0.9375rem;
+  color: var(--ink-700);
+  border-bottom: 1px solid var(--cream-200);
+}
+.flip-back li:last-child { border-bottom: none; }
+.flip-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--ink-300);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flip-inner { transition: none; transform: none !important; }
+  .flip-front, .flip-back { backface-visibility: visible; -webkit-backface-visibility: visible; transform: none; }
+  .flip-back { opacity: 0; pointer-events: none; }
+  .flip-card.flipped .flip-back { opacity: 1; pointer-events: auto; }
+  .flip-card.flipped .flip-front { opacity: 0; }
+  @media (hover: hover) {
+    .flip-card:hover .flip-back { opacity: 1; pointer-events: auto; }
+    .flip-card:hover .flip-front { opacity: 0; }
+  }
+}
