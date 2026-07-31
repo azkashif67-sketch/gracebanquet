@@ -20,12 +20,25 @@ if (process.env.NODE_ENV !== "production") {
   globalForDb.__libsqlClient = client;
 }
 
-// libSQL does not enable foreign key enforcement by default. busy_timeout lets
-// concurrent writers on a local file queue briefly instead of failing fast
-// with SQLITE_BUSY (irrelevant against hosted Turso, harmless to set anyway).
-globalForDb.__pragmaReady ??= client
-  .execute("PRAGMA foreign_keys = ON")
-  .then(() => client.execute("PRAGMA busy_timeout = 5000"));
+const isLocalFile = (process.env.TURSO_DATABASE_URL ?? "file:./local.db").startsWith("file:");
+
+// libSQL does not enable foreign key enforcement by default — needed against
+// both a local file and hosted Turso. busy_timeout only matters for a local
+// file's single-writer lock contention; Turso's remote server (a) handles
+// concurrency itself and (b) rejects some PRAGMAs outright over its wire
+// protocol (SQL_PARSE_ERROR), so only send it when talking to a local file.
+// Never let a startup PRAGMA failure become an unhandled rejection that can
+// crash the whole process — log and move on.
+globalForDb.__pragmaReady ??= (async () => {
+  try {
+    await client.execute("PRAGMA foreign_keys = ON");
+    if (isLocalFile) {
+      await client.execute("PRAGMA busy_timeout = 5000");
+    }
+  } catch (err) {
+    console.error("Startup PRAGMA failed (continuing anyway):", err);
+  }
+})();
 
 export const db = drizzle(client, { schema });
 export type Db = typeof db;
