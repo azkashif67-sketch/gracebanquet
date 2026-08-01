@@ -51,7 +51,25 @@ export interface BookingWizardProps {
   settings: VenueSettings;
   canApplyDiscount: boolean;
   canOverride: boolean;
-  prefill?: { eventDate?: string; eventSlot?: "day" | "night"; hallSection?: string };
+  prefill?: {
+    eventDate?: string;
+    eventSlot?: "day" | "night";
+    hallSection?: string;
+    phone?: string;
+    clientName?: string;
+    eventType?: string;
+    guestCount?: number;
+  };
+  /** Set when arriving via "Convert to Booking" from a quotation. */
+  fromQuotation?: {
+    id: string;
+    lines: ServiceLineUI[];
+    extras: ExtraLineUI[];
+    discountAmountPaisa: number;
+    taxIds: string[];
+  };
+  /** Set when arriving via "Convert to Booking" from an inquiry. */
+  sourceInquiryId?: string;
 }
 
 export function BookingWizard({
@@ -62,6 +80,8 @@ export function BookingWizard({
   canApplyDiscount,
   canOverride,
   prefill,
+  fromQuotation,
+  sourceInquiryId,
 }: BookingWizardProps) {
   const [step, setStep] = useState(0);
   const [stepError, setStepError] = useState<string | undefined>();
@@ -69,8 +89,8 @@ export function BookingWizard({
   const [submitting, setSubmitting] = useState(false);
 
   // Step 1 — client
-  const [phone, setPhone] = useState("");
-  const [clientName, setClientName] = useState("");
+  const [phone, setPhone] = useState(prefill?.phone ?? "");
+  const [clientName, setClientName] = useState(prefill?.clientName ?? "");
   const [altPhone, setAltPhone] = useState("");
   const [cnic, setCnic] = useState("");
   const [address, setAddress] = useState("");
@@ -83,11 +103,11 @@ export function BookingWizard({
   } | null>(null);
 
   // Step 1 — event
-  const [eventType, setEventType] = useState(settings.eventTypes[0] ?? "wedding");
+  const [eventType, setEventType] = useState(prefill?.eventType ?? settings.eventTypes[0] ?? "wedding");
   const [eventDate, setEventDate] = useState(prefill?.eventDate ?? "");
   const [eventSlot, setEventSlot] = useState<"day" | "night">(prefill?.eventSlot ?? "night");
   const [hallSection, setHallSection] = useState(prefill?.hallSection ?? settings.halls[0] ?? "");
-  const [guestCount, setGuestCount] = useState("");
+  const [guestCount, setGuestCount] = useState(prefill?.guestCount ? String(prefill.guestCount) : "");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [status, setStatus] = useState<"confirmed" | "tentative">("confirmed");
@@ -99,15 +119,30 @@ export function BookingWizard({
   const [overrideReason, setOverrideReason] = useState("");
 
   // Step 2 — services / menu
-  const [lines, setLines] = useState<ServiceLineUI[]>([]);
-  const [menus, setMenus] = useState<Record<string, MenuLineUI[]>>({});
+  const [lines, setLines] = useState<ServiceLineUI[]>(fromQuotation?.lines ?? []);
+  const [menus, setMenus] = useState<Record<string, MenuLineUI[]>>(() => {
+    if (!fromQuotation) return {};
+    const initial: Record<string, MenuLineUI[]> = {};
+    for (const line of fromQuotation.lines) {
+      if (line.category === "catering" && cateringMenus[line.serviceId]) {
+        initial[line.serviceId] = cateringMenus[line.serviceId].map((m) => ({
+          itemName: m.name,
+          type: m.type,
+          checked: true,
+        }));
+      }
+    }
+    return initial;
+  });
 
   // Step 3 — extras & charges
-  const [extras, setExtras] = useState<ExtraLineUI[]>([]);
-  const [discountRupees, setDiscountRupees] = useState("0");
+  const [extras, setExtras] = useState<ExtraLineUI[]>(fromQuotation?.extras ?? []);
+  const [discountRupees, setDiscountRupees] = useState(
+    fromQuotation ? String(toRupees(fromQuotation.discountAmountPaisa)) : "0",
+  );
   const [discountReason, setDiscountReason] = useState("");
   const [selectedTaxIds, setSelectedTaxIds] = useState<string[]>(
-    taxesAvailable.filter((t) => t.isDefault === 1).map((t) => t.id),
+    fromQuotation?.taxIds ?? taxesAvailable.filter((t) => t.isDefault === 1).map((t) => t.id),
   );
 
   // Step 4 — payment & notes
@@ -314,6 +349,8 @@ export function BookingWizard({
     setSubmitError(undefined);
 
     const input: BookingInput = {
+      sourceQuotationId: fromQuotation?.id,
+      sourceInquiryId,
       clientName,
       phone,
       altPhone: altPhone || undefined,

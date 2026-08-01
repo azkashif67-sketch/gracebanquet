@@ -18,6 +18,7 @@ export interface VenueSettings {
   eventTypes: string[];
   dueDateOffsetDays: number;
   holdDefaultDays: number;
+  quoteValidityDays: number;
   taxOnDiscounted: boolean;
 }
 
@@ -46,6 +47,7 @@ const DEFAULTS: VenueSettings = {
   ],
   dueDateOffsetDays: 2,
   holdDefaultDays: 7,
+  quoteValidityDays: 14,
   taxOnDiscounted: true,
 };
 
@@ -74,6 +76,7 @@ export async function getVenueSettings(): Promise<VenueSettings> {
     eventTypes: parse("event_types", DEFAULTS.eventTypes),
     dueDateOffsetDays: parse("due_date_offset_days", DEFAULTS.dueDateOffsetDays),
     holdDefaultDays: parse("hold_default_days", DEFAULTS.holdDefaultDays),
+    quoteValidityDays: parse("quote_validity_days", DEFAULTS.quoteValidityDays),
     taxOnDiscounted: parse("tax_on_discounted", DEFAULTS.taxOnDiscounted),
   };
 }

@@ -12,8 +12,10 @@ import {
   bookingServices,
   bookingTaxes,
   bookings,
+  inquiries,
   installments,
   payments,
+  quotations,
   taxes,
 } from "@/lib/db/schema";
 import { requireRole } from "@/lib/auth/require-role";
@@ -109,6 +111,9 @@ const bookingSchema = z.object({
   paymentReference: z.string().optional(),
   dueDate: z.string().optional(),
   installments: z.array(installmentLineSchema).optional(),
+
+  sourceQuotationId: z.string().optional(),
+  sourceInquiryId: z.string().optional(),
 
   internalNotes: z.string().optional(),
   clientNotes: z.string().optional(),
@@ -329,6 +334,36 @@ export async function createBooking(input: BookingInput): Promise<CreateBookingR
           ? `Created booking ${invoiceNo} for ${data.clientName} (availability override: ${data.overrideReason})`
           : `Created booking ${invoiceNo} for ${data.clientName}`,
       });
+
+      // 8. If this booking came from converting a quotation or inquiry,
+      //    close the loop in the same transaction — no re-entry, per spec
+      //    §9.11 / §11.3.
+      if (data.sourceQuotationId) {
+        await tx
+          .update(quotations)
+          .set({ status: "converted", convertedBookingId: id, updatedAt: nowSec })
+          .where(eq(quotations.id, data.sourceQuotationId));
+        await audit(tx, {
+          userId: user.id,
+          action: "update",
+          module: "quotation",
+          recordId: data.sourceQuotationId,
+          summary: `Converted to booking ${invoiceNo}`,
+        });
+      }
+      if (data.sourceInquiryId) {
+        await tx
+          .update(inquiries)
+          .set({ status: "converted", convertedBookingId: id })
+          .where(eq(inquiries.id, data.sourceInquiryId));
+        await audit(tx, {
+          userId: user.id,
+          action: "update",
+          module: "inquiry",
+          recordId: data.sourceInquiryId,
+          summary: `Converted to booking ${invoiceNo}`,
+        });
+      }
 
       return { id, invoiceNo };
     });

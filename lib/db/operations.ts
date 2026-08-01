@@ -49,6 +49,15 @@ export async function nextReceiptNo(tx: Transaction): Promise<string> {
   return `${prefix}-${year}-${String(value).padStart(4, "0")}`;
 }
 
+export async function nextQuoteNo(tx: Transaction): Promise<string> {
+  const year = new Date().getFullYear();
+  const key = `quote_${year}`;
+  const prefix = (await getSetting(tx, "quote_prefix")) ?? "QTN";
+
+  const value = await nextCounterValue(tx, key);
+  return `${prefix}-${year}-${String(value).padStart(4, "0")}`;
+}
+
 // ---------------------------------------------------------------------------
 // 5.4 Availability — the single most important query in the system.
 // ---------------------------------------------------------------------------

@@ -13,10 +13,13 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Schedule", href: "/schedule", roles: ["admin", "manager", "staff"] },
   { label: "Bookings", href: "/bookings", roles: ["admin", "manager", "staff"] },
   { label: "Invoices", href: "/invoices", roles: ["admin", "manager"] },
+  { label: "Quotations", href: "/quotations", roles: ["admin", "manager", "staff"] },
+  { label: "Clients", href: "/clients", roles: ["admin", "manager", "staff"] },
   { label: "Services", href: "/services", roles: ["admin", "manager", "staff"] },
   { label: "Expenses", href: "/expenses", roles: ["admin", "manager"] },
   { label: "Taxes", href: "/taxes", roles: ["admin", "manager"] },
   { label: "Reports", href: "/reports", roles: ["admin", "manager"] },
+  { label: "Inquiries", href: "/inquiries", roles: ["admin", "manager", "staff"] },
   { label: "Admin Settings", href: "/settings", roles: ["admin"] },
 ];
 

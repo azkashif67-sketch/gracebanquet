@@ -5,6 +5,7 @@ import {
   integer,
   uniqueIndex,
   index,
+  primaryKey,
 } from "drizzle-orm/sqlite-core";
 
 // ---------------------------------------------------------------------------
@@ -340,6 +341,160 @@ export const expenses = sqliteTable(
   (t) => [
     index("idx_expenses_date").on(t.expenseDate),
     index("idx_expenses_booking").on(t.bookingId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// quotations
+// A priced offer that hasn't become a booking. Mirrors the booking structure
+// but issues no invoice number and holds no date — event_date_pref does not
+// reserve a slot; only converting to a booking runs the availability check.
+// ---------------------------------------------------------------------------
+export const quotations = sqliteTable(
+  "quotations",
+  {
+    id: text("id").primaryKey(),
+    quoteNo: text("quote_no").notNull().unique(),
+    clientName: text("client_name").notNull(),
+    phone: text("phone").notNull(),
+    email: text("email"),
+    eventType: text("event_type"),
+    eventDatePref: text("event_date_pref"),
+    eventSlotPref: text("event_slot_pref"),
+    hallPref: text("hall_pref"),
+    guestCount: integer("guest_count"),
+    subtotal: integer("subtotal").notNull().default(0),
+    discountAmount: integer("discount_amount").notNull().default(0),
+    taxAmount: integer("tax_amount").notNull().default(0),
+    grandTotal: integer("grand_total").notNull().default(0),
+    validUntil: text("valid_until").notNull(),
+    status: text("status").notNull().default("draft"),
+    // draft|sent|accepted|expired|declined|converted
+    convertedBookingId: text("converted_booking_id").references(() => bookings.id),
+    notes: text("notes"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    deletedAt: integer("deleted_at"),
+  },
+  (t) => [
+    index("idx_quotations_no").on(t.quoteNo),
+    index("idx_quotations_status").on(t.status, t.validUntil),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// quotation_lines
+// ---------------------------------------------------------------------------
+export const quotationLines = sqliteTable(
+  "quotation_lines",
+  {
+    id: text("id").primaryKey(),
+    quotationId: text("quotation_id")
+      .notNull()
+      .references(() => quotations.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // service | extra
+    serviceId: text("service_id").references(() => services.id),
+    label: text("label").notNull(),
+    qty: integer("qty").notNull(),
+    rate: integer("rate").notNull(),
+    lineTotal: integer("line_total").notNull(),
+    taxable: integer("taxable").notNull().default(1),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("idx_quotation_lines_quotation").on(t.quotationId)],
+);
+
+// ---------------------------------------------------------------------------
+// inquiries
+// Staff-entered enquiry pipeline — there is no public form (spec §11).
+// `preferredSlot` isn't in the spec's raw §4.1 listing but is required by
+// the described UI (the inquiry detail view checks date+slot availability).
+// ---------------------------------------------------------------------------
+export const inquiries = sqliteTable(
+  "inquiries",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    phone: text("phone").notNull(),
+    email: text("email"),
+    eventType: text("event_type"),
+    preferredDate: text("preferred_date"),
+    preferredSlot: text("preferred_slot"),
+    guestEstimate: integer("guest_estimate"),
+    message: text("message").notNull(),
+    status: text("status").notNull().default("new"),
+    // new|read|contacted|converted|closed
+    closeReason: text("close_reason"),
+    followUpDate: text("follow_up_date"),
+    convertedBookingId: text("converted_booking_id").references(() => bookings.id),
+    receivedAt: integer("received_at").notNull(),
+    deletedAt: integer("deleted_at"),
+  },
+  (t) => [index("idx_inquiries_status").on(t.status, t.receivedAt)],
+);
+
+// ---------------------------------------------------------------------------
+// inquiry_notes
+// ---------------------------------------------------------------------------
+export const inquiryNotes = sqliteTable(
+  "inquiry_notes",
+  {
+    id: text("id").primaryKey(),
+    inquiryId: text("inquiry_id")
+      .notNull()
+      .references(() => inquiries.id, { onDelete: "cascade" }),
+    note: text("note").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_inquiry_notes_inquiry").on(t.inquiryId)],
+);
+
+// ---------------------------------------------------------------------------
+// notifications
+// Generated on render (dashboard load / panel open), not pushed by a cron —
+// see getDuesAlerts()-style computation (spec §5.5, §9.12).
+// ---------------------------------------------------------------------------
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    // overdue|due_soon|event_tomorrow|hold_expiring|new_inquiry|sync_failed
+    // |installment_due|quote_expiring
+    title: text("title").notNull(),
+    body: text("body"),
+    link: text("link"),
+    severity: text("severity").notNull().default("info"), // info|warning|critical
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_notif_created").on(t.createdAt)],
+);
+
+// ---------------------------------------------------------------------------
+// notification_reads
+// ---------------------------------------------------------------------------
+export const notificationReads = sqliteTable(
+  "notification_reads",
+  {
+    notificationId: text("notification_id")
+      .notNull()
+      .references(() => notifications.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    readAt: integer("read_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.notificationId, t.userId] }),
+    index("idx_notif_reads_user").on(t.userId),
   ],
 );
 
