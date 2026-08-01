@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "../index";
 import { bookings, payments } from "../schema";
 
@@ -80,15 +80,28 @@ export async function getClientDetail(phone: string): Promise<ClientDetail | nul
   const settledWithDueDate = active.filter((b) => b.balanceDue <= 0 && b.dueDate);
   let averageDaysLate: number | null = null;
   if (settledWithDueDate.length > 0) {
+    // One query for every relevant booking's payments, instead of one query
+    // per booking — the latter turned viewing a client with a long history
+    // into dozens of sequential round-trips to the database.
+    const allPayments = await db
+      .select({ bookingId: payments.bookingId, paidOn: payments.paidOn })
+      .from(payments)
+      .where(
+        and(
+          inArray(payments.bookingId, settledWithDueDate.map((b) => b.id)),
+          isNull(payments.deletedAt),
+        ),
+      );
+
+    const latestPaidOnByBooking = new Map<string, string>();
+    for (const p of allPayments) {
+      const current = latestPaidOnByBooking.get(p.bookingId);
+      if (!current || p.paidOn > current) latestPaidOnByBooking.set(p.bookingId, p.paidOn);
+    }
+
     const lateDays: number[] = [];
     for (const b of settledWithDueDate) {
-      const lastPayment = await db
-        .select({ paidOn: payments.paidOn })
-        .from(payments)
-        .where(and(eq(payments.bookingId, b.id), isNull(payments.deletedAt)))
-        .orderBy(desc(payments.paidOn))
-        .limit(1);
-      const paidOn = lastPayment[0]?.paidOn;
+      const paidOn = latestPaidOnByBooking.get(b.id);
       if (paidOn && b.dueDate) {
         const days = Math.floor(
           (new Date(paidOn).getTime() - new Date(b.dueDate).getTime()) / 86400000,

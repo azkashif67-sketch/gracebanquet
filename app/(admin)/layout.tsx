@@ -2,22 +2,17 @@ import { requireAuth } from "@/lib/auth/require-role";
 import { navItemsForRole } from "@/lib/auth/permissions";
 import { Sidebar } from "@/components/nav/sidebar";
 import { Header } from "@/components/nav/header";
-import {
-  generateNotifications,
-  getNotificationsForUser,
-  getUnreadCount,
-} from "@/lib/db/queries/notifications";
+import { getNotificationsForUser, getUnreadCount } from "@/lib/db/queries/notifications";
 
+// Notifications are only *generated* on dashboard load (spec §9.12) — this
+// shared layout wraps every admin page, so calling generateNotifications()
+// here (as an earlier version did) reran its dues/quote-expiry checks on
+// every single navigation across the whole app, not just the dashboard.
+// This layout only reads the already-generated list for the bell.
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await requireAuth();
   const items = navItemsForRole(user.role);
 
-  // Dues/quote-expiry alerts are money-related and only meaningful for
-  // Admin/Manager to generate; Staff still see whatever already exists
-  // (e.g. new_inquiry, which is written inline elsewhere).
-  if (user.role === "admin" || user.role === "manager") {
-    await generateNotifications();
-  }
   const [notifications, unreadCount] = await Promise.all([
     getNotificationsForUser(user.id),
     getUnreadCount(user.id),

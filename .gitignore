@@ -49,5 +49,8 @@ test-integration.db
 test-integration.db-wal
 test-integration.db-shm
 
-# local-machine Claude Code settings (permissions etc.), not project config
-.claude/settings.local.json
+# local-machine Claude Code settings (permissions etc.), not project config.
+# settings.json can end up recording full approved command lines verbatim,
+# which is a real risk when a command happened to contain a live credential
+# (e.g. a DB token passed inline) — never commit anything under .claude/.
+.claude/

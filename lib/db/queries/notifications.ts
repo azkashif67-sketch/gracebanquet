@@ -25,96 +25,97 @@ function startOfTodayEpoch(): number {
   return Math.floor(d.getTime() / 1000);
 }
 
-async function upsertOnce(draft: NotificationDraft): Promise<void> {
-  const todayStart = startOfTodayEpoch();
-  const existing = await db
-    .select({ id: notifications.id })
-    .from(notifications)
-    .where(
-      and(
-        eq(notifications.type, draft.type),
-        eq(notifications.entityType, draft.entityType),
-        eq(notifications.entityId, draft.entityId),
-        gte(notifications.createdAt, todayStart),
-      ),
-    )
-    .limit(1);
-  if (existing.length > 0) return;
-
-  await db.insert(notifications).values({
-    id: nanoid(),
-    type: draft.type,
-    title: draft.title,
-    body: draft.body ?? null,
-    link: draft.link ?? null,
-    severity: draft.severity,
-    entityType: draft.entityType,
-    entityId: draft.entityId,
-    createdAt: Math.floor(Date.now() / 1000),
-  });
-}
+const draftKey = (d: Pick<NotificationDraft, "type" | "entityType" | "entityId">) =>
+  `${d.type}:${d.entityType}:${d.entityId}`;
 
 // Time-based notifications are computed on render (dashboard load / panel
 // open) and deduplicated per day, rather than pushed by a cron — spec §9.12.
 // Event-based ones (new_inquiry) are written inline where they happen
 // instead (see app/(admin)/inquiries/actions.ts).
+//
+// This runs on every admin/manager page load (see app/(admin)/layout.tsx),
+// so it must stay to a small, fixed number of round-trips regardless of how
+// many candidate notifications there are — one read of today's existing
+// rows, then one batched insert. The original version issued a SELECT (and
+// often an INSERT) per candidate inside a sequential loop, which turned
+// every page view into dozens of round-trips against the remote Turso
+// connection and was the main cause of the app feeling slow.
 export async function generateNotifications(): Promise<void> {
   const [dues, expiringQuotes] = await Promise.all([getDuesAlerts(), getExpiringQuotations(3)]);
 
-  for (const b of dues.overdue) {
-    await upsertOnce({
+  const drafts: NotificationDraft[] = [
+    ...dues.overdue.map((b) => ({
       type: "overdue",
       title: `Overdue: ${b.invoiceNo ?? b.clientName}`,
       body: `${b.clientName} — ${formatPKR(b.balanceDue)} overdue`,
       link: `/bookings/${b.id}`,
-      severity: "critical",
+      severity: "critical" as const,
       entityType: "booking",
       entityId: b.id,
-    });
-  }
-  for (const b of dues.dueSoon) {
-    await upsertOnce({
+    })),
+    ...dues.dueSoon.map((b) => ({
       type: "due_soon",
       title: `Due soon: ${b.invoiceNo ?? b.clientName}`,
       body: `${b.clientName} — ${formatPKR(b.balanceDue)} due ${b.dueDate}`,
       link: `/bookings/${b.id}`,
-      severity: "warning",
+      severity: "warning" as const,
       entityType: "booking",
       entityId: b.id,
-    });
-  }
-  for (const b of dues.eventTomorrow) {
-    await upsertOnce({
+    })),
+    ...dues.eventTomorrow.map((b) => ({
       type: "event_tomorrow",
       title: `Event tomorrow: ${b.clientName}`,
       body: b.balanceDue > 0 ? `${formatPKR(b.balanceDue)} still pending` : undefined,
       link: `/bookings/${b.id}`,
-      severity: "warning",
+      severity: "warning" as const,
       entityType: "booking",
       entityId: b.id,
-    });
-  }
-  for (const b of dues.expiringHolds) {
-    await upsertOnce({
+    })),
+    ...dues.expiringHolds.map((b) => ({
       type: "hold_expiring",
       title: `Hold expiring: ${b.clientName}`,
       link: `/bookings/${b.id}`,
-      severity: "warning",
+      severity: "warning" as const,
       entityType: "booking",
       entityId: b.id,
-    });
-  }
-  for (const q of expiringQuotes) {
-    await upsertOnce({
+    })),
+    ...expiringQuotes.map((q) => ({
       type: "quote_expiring",
       title: `Quote ${q.quoteNo} expiring soon`,
       body: `Valid until ${q.validUntil}`,
       link: `/quotations/${q.id}`,
-      severity: "warning",
+      severity: "warning" as const,
       entityType: "quotation",
       entityId: q.id,
-    });
-  }
+    })),
+  ];
+
+  if (drafts.length === 0) return;
+
+  const todayStart = startOfTodayEpoch();
+  const existingToday = await db
+    .select({ type: notifications.type, entityType: notifications.entityType, entityId: notifications.entityId })
+    .from(notifications)
+    .where(gte(notifications.createdAt, todayStart));
+  const existingKeys = new Set(existingToday.map((n) => draftKey({ type: n.type, entityType: n.entityType ?? "", entityId: n.entityId ?? "" })));
+
+  const toInsert = drafts.filter((d) => !existingKeys.has(draftKey(d)));
+  if (toInsert.length === 0) return;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  await db.insert(notifications).values(
+    toInsert.map((d) => ({
+      id: nanoid(),
+      type: d.type,
+      title: d.title,
+      body: d.body ?? null,
+      link: d.link ?? null,
+      severity: d.severity,
+      entityType: d.entityType,
+      entityId: d.entityId,
+      createdAt: nowSec,
+    })),
+  );
 }
 
 export interface NotificationRow {

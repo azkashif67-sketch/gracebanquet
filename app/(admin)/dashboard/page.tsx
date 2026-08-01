@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAuth } from "@/lib/auth/require-role";
 import { getDuesAlerts } from "@/lib/db/queries/bookings";
 import { countNewInquiries } from "@/lib/db/queries/inquiries";
+import { generateNotifications } from "@/lib/db/queries/notifications";
 import { getKpis, getLatestBookings, getBalancesDueThisWeek, getRecentActivity } from "@/lib/db/queries/dashboard";
 import { resolvePeriod, type PeriodKey } from "@/lib/dashboard-period";
 import { formatPKR } from "@/lib/calculations";
@@ -32,6 +33,13 @@ export default async function DashboardPage({
   const user = await requireAuth();
   const params = await searchParams;
   const isStaff = user.role === "staff";
+
+  // Notifications are (re)computed here, and only here (spec §9.12) — the
+  // dedup-per-day check makes this a no-op after the first dashboard visit
+  // of the day.
+  if (!isStaff) {
+    await generateNotifications();
+  }
 
   const [dues, newInquiries] = await Promise.all([getDuesAlerts(), countNewInquiries()]);
 
