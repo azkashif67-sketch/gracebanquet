@@ -202,10 +202,28 @@ export const bookingExtras = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// installments
+// An optional payment plan attached to a booking. Each row is one scheduled
+// step; status is derived (not stored) by comparing linked `payments` rows
+// against `amount`.
+// ---------------------------------------------------------------------------
+export const installments = sqliteTable(
+  "installments",
+  {
+    id: text("id").primaryKey(),
+    bookingId: text("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    label: text("label").notNull(), // "Advance", "2nd instalment", "Balance on event day"
+    amount: integer("amount").notNull(), // planned amount for this step, paisa
+    dueDate: text("due_date").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("idx_installments_bkg").on(t.bookingId, t.dueDate)],
+);
+
+// ---------------------------------------------------------------------------
 // payments
-// Note: spec §4.1 also has `installment_id text REFERENCES installments(id)`
-// — omitted here because the `installments` table (payment plans) is Phase 2
-// scope; add the column + FK in a later migration alongside that table.
 // ---------------------------------------------------------------------------
 export const payments = sqliteTable(
   "payments",
@@ -219,6 +237,7 @@ export const payments = sqliteTable(
     method: text("method").notNull(), // cash|bank|cheque|easypaisa|jazzcash
     reference: text("reference"),
     paidOn: text("paid_on").notNull(),
+    installmentId: text("installment_id").references(() => installments.id),
     notes: text("notes"),
     recordedBy: text("recorded_by")
       .notNull()
@@ -291,6 +310,37 @@ export const auditLog = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("idx_audit_created").on(t.createdAt)],
+);
+
+// ---------------------------------------------------------------------------
+// expenses
+// ---------------------------------------------------------------------------
+export const expenses = sqliteTable(
+  "expenses",
+  {
+    id: text("id").primaryKey(),
+    expenseDate: text("expense_date").notNull(),
+    category: text("category").notNull(),
+    // salaries|utilities|food_raw|decor_material|maintenance|rent
+    // |fuel|transport|marketing|equipment|taxes_fees|misc
+    description: text("description").notNull(),
+    amount: integer("amount").notNull(), // paisa
+    vendor: text("vendor"),
+    method: text("method"),
+    reference: text("reference"),
+    bookingId: text("booking_id").references(() => bookings.id), // NULL = general overhead
+    receiptPath: text("receipt_path"),
+    isRecurring: integer("is_recurring").notNull().default(0),
+    paidBy: text("paid_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    deletedAt: integer("deleted_at"),
+  },
+  (t) => [
+    index("idx_expenses_date").on(t.expenseDate),
+    index("idx_expenses_booking").on(t.bookingId),
+  ],
 );
 
 // ---------------------------------------------------------------------------

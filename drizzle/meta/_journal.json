@@ -15,6 +15,13 @@
       "when": 1785530479951,
       "tag": "0001_friendly_princess_powerful",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785541344881,
+      "tag": "0002_common_caretaker",
+      "breakpoints": true
     }
   ]
 }

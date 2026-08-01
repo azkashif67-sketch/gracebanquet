@@ -1,7 +1,7 @@
 import type { Role } from "./require-role";
 
-// Phase 1 subset of the full permission matrix (spec §14.2). Extend as later
-// phases add Invoices, Quotations, Clients, Expenses, Reports, Inquiries, etc.
+// Subset of the full permission matrix (spec §14.2). Extend as later phases
+// add Quotations, Clients, Inquiries, etc.
 export interface NavItem {
   label: string;
   href: string;
@@ -12,8 +12,11 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", roles: ["admin", "manager", "staff"] },
   { label: "Schedule", href: "/schedule", roles: ["admin", "manager", "staff"] },
   { label: "Bookings", href: "/bookings", roles: ["admin", "manager", "staff"] },
+  { label: "Invoices", href: "/invoices", roles: ["admin", "manager"] },
   { label: "Services", href: "/services", roles: ["admin", "manager", "staff"] },
+  { label: "Expenses", href: "/expenses", roles: ["admin", "manager"] },
   { label: "Taxes", href: "/taxes", roles: ["admin", "manager"] },
+  { label: "Reports", href: "/reports", roles: ["admin", "manager"] },
   { label: "Admin Settings", href: "/settings", roles: ["admin"] },
 ];
 
@@ -27,3 +30,4 @@ export function navItemsForRole(role: Role): NavItem[] {
 export const canApplyDiscount = (role: Role) => role === "admin" || role === "manager";
 export const canOverrideAvailability = (role: Role) => role === "admin";
 export const canManageServices = (role: Role) => role === "admin" || role === "manager";
+export const canManageExpenses = (role: Role) => role === "admin" || role === "manager";

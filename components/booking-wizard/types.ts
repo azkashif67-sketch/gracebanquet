@@ -21,6 +21,12 @@ export interface ExtraLineUI {
   taxable: boolean;
 }
 
+export interface InstallmentRowUI {
+  label: string;
+  amountRupees: string;
+  dueDate: string;
+}
+
 export type { ActiveService as AvailableService } from "@/lib/db/queries/services";
 
 export interface AvailableTax {

@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { RecordPaymentDialog } from "@/components/bookings/record-payment-dialog";
 
 export default async function BookingDetailPage({
   params,
@@ -28,9 +29,11 @@ export default async function BookingDetailPage({
 
   const detail = await getBookingDetail(id);
   if (!detail) notFound();
-  const { booking, serviceLines, menu, extras, taxLines, payments } = detail;
+  const { booking, serviceLines, menu, extras, taxLines, payments, installments } = detail;
 
   const showMoney = user.role !== "staff";
+  const canRecordPayment = user.role === "admin" || user.role === "manager";
+  const pendingInstallments = installments.filter((i) => i.status !== "paid");
 
   return (
     <div className="flex flex-col gap-4">
@@ -150,28 +153,93 @@ export default async function BookingDetailPage({
         </Card>
       )}
 
-      {showMoney && payments.length > 0 && (
+      {showMoney && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-base">Payments</CardTitle>
+            {canRecordPayment && booking.status !== "cancelled" && (
+              <RecordPaymentDialog
+                bookingId={id}
+                installments={pendingInstallments.map((i) => ({
+                  id: i.id,
+                  label: `${i.label} — ${formatPKR(i.amount - i.paidAmount)} remaining`,
+                }))}
+              />
+            )}
+          </CardHeader>
+          <CardContent>
+            {payments.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Receipt No</TableHead>
+                    <TableHead>Method</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {payments.map((p) => (
+                    <TableRow key={p.id}>
+                      <TableCell>{p.paidOn}</TableCell>
+                      <TableCell>{p.receiptNo}</TableCell>
+                      <TableCell className="capitalize">{p.method}</TableCell>
+                      <TableCell>{formatPKR(p.amount)}</TableCell>
+                      <TableCell>
+                        <Link
+                          href={`/bookings/${id}/receipt/${p.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          Print receipt
+                        </Link>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-sm text-muted-foreground">No payments recorded yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {showMoney && installments.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Payments</CardTitle>
+            <CardTitle className="text-base">Payment Plan</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Receipt No</TableHead>
-                  <TableHead>Method</TableHead>
+                  <TableHead>Step</TableHead>
                   <TableHead>Amount</TableHead>
+                  <TableHead>Due Date</TableHead>
+                  <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {payments.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell>{p.paidOn}</TableCell>
-                    <TableCell>{p.receiptNo}</TableCell>
-                    <TableCell className="capitalize">{p.method}</TableCell>
-                    <TableCell>{formatPKR(p.amount)}</TableCell>
+                {installments.map((inst) => (
+                  <TableRow key={inst.id}>
+                    <TableCell>{inst.label}</TableCell>
+                    <TableCell>{formatPKR(inst.amount)}</TableCell>
+                    <TableCell>{inst.dueDate}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          inst.status === "paid"
+                            ? "default"
+                            : inst.status === "overdue"
+                              ? "destructive"
+                              : "secondary"
+                        }
+                        className="capitalize"
+                      >
+                        {inst.status}
+                      </Badge>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -33,7 +33,14 @@ import {
 import type { VenueSettings } from "@/lib/db/queries/settings";
 import { LiveSummary } from "./live-summary";
 import { Field } from "@/components/form-field";
-import type { AvailableService, AvailableTax, ExtraLineUI, MenuLineUI, ServiceLineUI } from "./types";
+import type {
+  AvailableService,
+  AvailableTax,
+  ExtraLineUI,
+  InstallmentRowUI,
+  MenuLineUI,
+  ServiceLineUI,
+} from "./types";
 
 const STEP_TITLES = ["Client & Event", "Services", "Extras & Charges", "Payment & Notes"];
 
@@ -111,6 +118,9 @@ export function BookingWizard({
   const [paymentDate, setPaymentDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [paymentReference, setPaymentReference] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [usePaymentPlan, setUsePaymentPlan] = useState(false);
+  const [installmentRows, setInstallmentRows] = useState<InstallmentRowUI[]>([]);
+  const [splitCount, setSplitCount] = useState("3");
   const [internalNotes, setInternalNotes] = useState("");
   const [clientNotes, setClientNotes] = useState("");
   const [specialInstructions, setSpecialInstructions] = useState("");
@@ -221,6 +231,31 @@ export function BookingWizard({
   const advancePaisa = toPaisa(Number(advanceRupees) || 0);
   const balance = totals.grandTotal - advancePaisa;
 
+  const installmentSumPaisa = installmentRows.reduce(
+    (s, r) => s + toPaisa(Number(r.amountRupees) || 0),
+    0,
+  );
+  const installmentRemainder = totals.grandTotal - installmentSumPaisa;
+
+  function splitEvenly() {
+    const n = Math.max(1, Math.min(12, Math.floor(Number(splitCount)) || 1));
+    const base = Math.floor(totals.grandTotal / n);
+    const remainder = totals.grandTotal - base * n;
+    const rows: InstallmentRowUI[] = Array.from({ length: n }, (_, i) => {
+      const amountPaisa = base + (i === n - 1 ? remainder : 0);
+      const due =
+        i === 0
+          ? format(new Date(), "yyyy-MM-dd")
+          : format(addDays(new Date(), i * 30), "yyyy-MM-dd");
+      return {
+        label: i === 0 ? "Advance" : i === n - 1 ? "Balance on event day" : `Installment ${i + 1}`,
+        amountRupees: String(toRupees(amountPaisa)),
+        dueDate: due,
+      };
+    });
+    setInstallmentRows(rows);
+  }
+
   function validateStep(): string | undefined {
     if (step === 0) {
       if (!phone.trim()) return "Phone is required.";
@@ -239,7 +274,17 @@ export function BookingWizard({
     }
     if (step === 3) {
       if (advancePaisa > 0 && !paymentMethod) return "Payment method is required.";
-      if (balance > 0 && !dueDate) return "Due date is required when a balance remains.";
+      if (usePaymentPlan) {
+        if (installmentRows.length === 0) return "Add at least one installment step.";
+        if (installmentRows.some((r) => !r.label.trim() || !r.dueDate || Number(r.amountRupees) <= 0)) {
+          return "Every installment needs a label, a positive amount, and a due date.";
+        }
+        if (installmentRemainder !== 0) {
+          return `Installment plan must total the grand total — ${installmentRemainder > 0 ? "short by" : "over by"} ${formatPKR(Math.abs(installmentRemainder))}.`;
+        }
+      } else if (balance > 0 && !dueDate) {
+        return "Due date is required when a balance remains.";
+      }
     }
     return undefined;
   }
@@ -309,7 +354,14 @@ export function BookingWizard({
       paymentMethod: advancePaisa > 0 ? paymentMethod : undefined,
       paymentDate: advancePaisa > 0 ? paymentDate : undefined,
       paymentReference: paymentReference || undefined,
-      dueDate: dueDate || undefined,
+      dueDate: usePaymentPlan ? undefined : dueDate || undefined,
+      installments: usePaymentPlan
+        ? installmentRows.map((r) => ({
+            label: r.label,
+            amountPaisa: toPaisa(Number(r.amountRupees) || 0),
+            dueDate: r.dueDate,
+          }))
+        : undefined,
       internalNotes: internalNotes || undefined,
       clientNotes: clientNotes || undefined,
       specialInstructions: specialInstructions || undefined,
@@ -759,10 +811,102 @@ export function BookingWizard({
               <Field label="Balance due">
                 <Input value={formatPKR(balance)} disabled />
               </Field>
-              <Field label="Due date">
-                <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-              </Field>
+              {!usePaymentPlan && (
+                <Field label="Due date">
+                  <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </Field>
+              )}
             </div>
+
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={usePaymentPlan} onCheckedChange={(v) => setUsePaymentPlan(v === true)} />
+              Use a payment plan instead of a single due date
+            </label>
+
+            {usePaymentPlan && (
+              <div className="flex flex-col gap-3 rounded-md border p-3">
+                <div className="flex items-end gap-2">
+                  <Field label="Split evenly into">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={12}
+                      className="w-24"
+                      value={splitCount}
+                      onChange={(e) => setSplitCount(e.target.value)}
+                    />
+                  </Field>
+                  <Button type="button" variant="outline" onClick={splitEvenly}>
+                    Generate
+                  </Button>
+                </div>
+
+                {installmentRows.map((row, i) => (
+                  <div key={i} className="flex items-end gap-2">
+                    <Field label="Label">
+                      <Input
+                        value={row.label}
+                        onChange={(e) =>
+                          setInstallmentRows((prev) =>
+                            prev.map((r, idx) => (idx === i ? { ...r, label: e.target.value } : r)),
+                          )
+                        }
+                      />
+                    </Field>
+                    <Field label="Amount (Rs)">
+                      <Input
+                        type="number"
+                        className="w-32"
+                        value={row.amountRupees}
+                        onChange={(e) =>
+                          setInstallmentRows((prev) =>
+                            prev.map((r, idx) =>
+                              idx === i ? { ...r, amountRupees: e.target.value } : r,
+                            ),
+                          )
+                        }
+                      />
+                    </Field>
+                    <Field label="Due date">
+                      <Input
+                        type="date"
+                        value={row.dueDate}
+                        onChange={(e) =>
+                          setInstallmentRows((prev) =>
+                            prev.map((r, idx) => (idx === i ? { ...r, dueDate: e.target.value } : r)),
+                          )
+                        }
+                      />
+                    </Field>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setInstallmentRows((prev) => prev.filter((_, idx) => idx !== i))}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="self-start"
+                  onClick={() =>
+                    setInstallmentRows((prev) => [...prev, { label: "", amountRupees: "", dueDate: "" }])
+                  }
+                >
+                  Add step
+                </Button>
+
+                <p
+                  className={`text-sm ${installmentRemainder === 0 ? "text-green-600" : "text-destructive"}`}
+                >
+                  {installmentRemainder === 0
+                    ? "✓ Plan reconciles to the grand total."
+                    : `Remaining to allocate: ${formatPKR(installmentRemainder)}`}
+                </p>
+              </div>
+            )}
 
             <Field label="Internal notes (never printed)">
               <Textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} />

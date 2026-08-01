@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -12,6 +12,7 @@ import {
   bookingServices,
   bookingTaxes,
   bookings,
+  installments,
   payments,
   taxes,
 } from "@/lib/db/schema";
@@ -70,6 +71,12 @@ const extraLineSchema = z.object({
   taxable: z.boolean(),
 });
 
+const installmentLineSchema = z.object({
+  label: z.string().min(1),
+  amountPaisa: z.number().int().positive(),
+  dueDate: z.string().min(1),
+});
+
 const bookingSchema = z.object({
   clientName: z.string().min(1),
   phone: z.string().min(1),
@@ -101,6 +108,7 @@ const bookingSchema = z.object({
   paymentDate: z.string().optional(),
   paymentReference: z.string().optional(),
   dueDate: z.string().optional(),
+  installments: z.array(installmentLineSchema).optional(),
 
   internalNotes: z.string().optional(),
   clientNotes: z.string().optional(),
@@ -121,6 +129,8 @@ class ConflictError extends Error {
     super("Slot is not available");
   }
 }
+
+class ValidationError extends Error {}
 
 export async function createBooking(input: BookingInput): Promise<CreateBookingResult> {
   const user = await requireRole("admin", "manager", "staff");
@@ -180,6 +190,18 @@ export async function createBooking(input: BookingInput): Promise<CreateBookingR
         taxes: selectedTaxes.map((t) => ({ id: t.id, name: t.name, rateBps: t.rate })),
         taxOnDiscounted: venueSettings.taxOnDiscounted,
       });
+
+      // 2b. An installment plan, if given, must reconcile to the grand total
+      //    — checked here (not just client-side) since totals are only known
+      //    for certain once resolved server-side above.
+      if (data.installments?.length) {
+        const planSum = data.installments.reduce((s, i) => s + i.amountPaisa, 0);
+        if (planSum !== totals.grandTotal) {
+          throw new ValidationError(
+            `Installment plan (${planSum}) does not match the grand total (${totals.grandTotal}).`,
+          );
+        }
+      }
 
       // 3. Invoice number — same transaction, atomic counter. Drafts don't
       //    consume a number (out of Phase 1 scope: only confirmed/tentative
@@ -270,6 +292,18 @@ export async function createBooking(input: BookingInput): Promise<CreateBookingR
           })),
         );
       }
+      if (data.installments?.length) {
+        await tx.insert(installments).values(
+          data.installments.map((inst, i) => ({
+            id: nanoid(),
+            bookingId: id,
+            label: inst.label,
+            amount: inst.amountPaisa,
+            dueDate: inst.dueDate,
+            sortOrder: i,
+          })),
+        );
+      }
 
       // 6. Advance payment as a real ledger row
       if (data.advanceAmountPaisa > 0) {
@@ -302,11 +336,92 @@ export async function createBooking(input: BookingInput): Promise<CreateBookingR
     if (err instanceof ConflictError) {
       return { error: "This date/slot/hall is no longer available.", conflicts: err.conflicts };
     }
+    if (err instanceof ValidationError) {
+      return { error: err.message };
+    }
     throw err;
   }
 
   revalidatePath("/bookings");
   revalidatePath("/schedule");
   redirect(`/bookings/${result.id}?created=1`);
+}
+
+// ---------------------------------------------------------------------------
+// Payment ledger (spec §9.3)
+// ---------------------------------------------------------------------------
+const recordPaymentSchema = z.object({
+  bookingId: z.string().min(1),
+  amountPaisa: z.number().int(), // negative for a refund
+  method: z.enum(["cash", "bank", "cheque", "easypaisa", "jazzcash"]),
+  paidOn: z.string().min(1),
+  reference: z.string().optional(),
+  notes: z.string().optional(),
+  installmentId: z.string().optional(),
+});
+
+export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
+
+export interface RecordPaymentResult {
+  error?: string;
+  paymentId?: string;
+  overpaid?: boolean;
+}
+
+export async function recordPayment(input: RecordPaymentInput): Promise<RecordPaymentResult> {
+  const user = await requireRole("admin", "manager");
+  const parsed = recordPaymentSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid payment." };
+  const data = parsed.data;
+
+  const booking = await db.query.bookings.findFirst({ where: eq(bookings.id, data.bookingId) });
+  if (!booking) return { error: "Booking not found." };
+
+  const { paymentId, newBalance } = await db.transaction(async (tx) => {
+    const id = nanoid();
+    const receiptNo = await nextReceiptNo(tx);
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    await tx.insert(payments).values({
+      id,
+      bookingId: data.bookingId,
+      receiptNo,
+      amount: data.amountPaisa,
+      method: data.method,
+      reference: data.reference || null,
+      paidOn: data.paidOn,
+      installmentId: data.installmentId || null,
+      notes: data.notes || null,
+      recordedBy: user.id,
+      createdAt: nowSec,
+    });
+
+    // Recompute the denormalised totals inside the same transaction — every
+    // payment mutation must do this together, never separately (spec §20.4).
+    const [{ total }] = await tx
+      .select({ total: sql<number>`COALESCE(SUM(${payments.amount}), 0)` })
+      .from(payments)
+      .where(and(eq(payments.bookingId, data.bookingId), isNull(payments.deletedAt)));
+
+    const balance = booking.grandTotal - total;
+    await tx
+      .update(bookings)
+      .set({ amountPaid: total, balanceDue: balance, updatedAt: nowSec })
+      .where(eq(bookings.id, data.bookingId));
+
+    await audit(tx, {
+      userId: user.id,
+      action: "payment",
+      module: "payment",
+      recordId: id,
+      summary: `Recorded payment ${receiptNo} (${data.amountPaisa < 0 ? "refund" : "payment"}) on ${booking.invoiceNo}`,
+    });
+
+    return { paymentId: id, newBalance: balance };
+  });
+
+  revalidatePath(`/bookings/${data.bookingId}`);
+  revalidatePath("/bookings");
+  return { paymentId, overpaid: newBalance < 0 };
 }
 

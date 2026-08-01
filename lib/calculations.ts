@@ -102,3 +102,63 @@ export function calculateTotals(input: TotalsInput): TotalsResult {
 
   return { subtotal, discount, taxableAmount, taxLines, taxAmount, grandTotal };
 }
+
+// ---------------------------------------------------------------------------
+// Amount in words — Pakistani receipts use the lakh/crore convention, not
+// million/billion (spec §9.8, §20.12): "Rs 957,000" is "Nine Lakh Fifty-Seven
+// Thousand Rupees Only", not "Nine Hundred Fifty-Seven Thousand".
+// ---------------------------------------------------------------------------
+const ONES = [
+  "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+  "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+  "Seventeen", "Eighteen", "Nineteen",
+];
+const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+function belowHundredToWords(n: number): string {
+  if (n < 20) return ONES[n];
+  const tens = Math.floor(n / 10);
+  const ones = n % 10;
+  return TENS[tens] + (ones ? `-${ONES[ones]}` : "");
+}
+
+function belowThousandToWords(n: number): string {
+  const hundreds = Math.floor(n / 100);
+  const rest = n % 100;
+  const parts: string[] = [];
+  if (hundreds) parts.push(`${ONES[hundreds]} Hundred`);
+  if (rest) parts.push(belowHundredToWords(rest));
+  return parts.join(" ");
+}
+
+// Converts a non-negative integer into words using the lakh/crore grouping.
+export function numberToWords(n: number): string {
+  const value = Math.floor(Math.abs(n));
+  if (value === 0) return "Zero";
+
+  const crore = Math.floor(value / 1_00_00_000);
+  const lakh = Math.floor((value % 1_00_00_000) / 1_00_000);
+  const thousand = Math.floor((value % 1_00_000) / 1_000);
+  const remainder = value % 1_000;
+
+  const parts: string[] = [];
+  if (crore) parts.push(`${belowThousandToWords(crore)} Crore`);
+  if (lakh) parts.push(`${belowThousandToWords(lakh)} Lakh`);
+  if (thousand) parts.push(`${belowThousandToWords(thousand)} Thousand`);
+  if (remainder) parts.push(belowThousandToWords(remainder));
+
+  return parts.join(" ");
+}
+
+// Formats a paisa amount as the words printed on a receipt, e.g.
+// "Nine Lakh Fifty-Seven Thousand Rupees Only" or, with a paisa remainder,
+// "One Thousand Rupees and Fifty Paisa Only".
+export function amountInWords(paisa: number): string {
+  const rupees = Math.floor(Math.abs(paisa) / 100);
+  const paisaRemainder = Math.abs(paisa) % 100;
+
+  const rupeeWords = `${numberToWords(rupees)} Rupee${rupees === 1 ? "" : "s"}`;
+  const paisaWords = paisaRemainder > 0 ? ` and ${numberToWords(paisaRemainder)} Paisa` : "";
+
+  return `${rupeeWords}${paisaWords} Only`;
+}

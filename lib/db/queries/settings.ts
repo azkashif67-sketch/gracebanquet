@@ -11,6 +11,7 @@ export interface VenueSettings {
   venueName: string;
   address: string;
   phone: string;
+  ntn: string;
   invoicePrefix: string;
   halls: string[];
   slots: { day: SlotConfig; night: SlotConfig };
@@ -24,6 +25,7 @@ const DEFAULTS: VenueSettings = {
   venueName: "",
   address: "",
   phone: "",
+  ntn: "",
   invoicePrefix: "INV",
   halls: ["Main Hall", "Full Venue"],
   slots: {
@@ -65,6 +67,7 @@ export async function getVenueSettings(): Promise<VenueSettings> {
     venueName: parse("venue_name", DEFAULTS.venueName),
     address: parse("address", DEFAULTS.address),
     phone: parse("phone", DEFAULTS.phone),
+    ntn: parse("ntn", DEFAULTS.ntn),
     invoicePrefix: parse("invoice_prefix", DEFAULTS.invoicePrefix),
     halls: parse("halls", DEFAULTS.halls),
     slots: parse("slots", DEFAULTS.slots),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateTotals, formatPKR, toPaisa, toRupees } from "../calculations";
+import { amountInWords, calculateTotals, formatPKR, numberToWords, toPaisa, toRupees } from "../calculations";
 
 describe("money helpers", () => {
   it("converts rupees to paisa without float drift", () => {
@@ -130,5 +130,42 @@ describe("calculateTotals", () => {
     expect(result.taxableAmount).toBe(0);
     expect(result.taxAmount).toBe(0);
     expect(result.grandTotal).toBe(0);
+  });
+});
+
+describe("numberToWords / amountInWords", () => {
+  it("handles zero", () => {
+    expect(numberToWords(0)).toBe("Zero");
+  });
+
+  it("handles the spec's own worked example (lakh, not million)", () => {
+    // "Rs 957,000" -> "Nine Lakh Fifty-Seven Thousand Rupees Only" (spec §9.8/§20.12)
+    expect(numberToWords(957000)).toBe("Nine Lakh Fifty-Seven Thousand");
+    expect(amountInWords(toPaisa(957000))).toBe("Nine Lakh Fifty-Seven Thousand Rupees Only");
+  });
+
+  it("handles crore", () => {
+    expect(numberToWords(12345678)).toBe(
+      "One Crore Twenty-Three Lakh Forty-Five Thousand Six Hundred Seventy-Eight",
+    );
+  });
+
+  it("handles teens and compound tens correctly", () => {
+    expect(numberToWords(19)).toBe("Nineteen");
+    expect(numberToWords(21)).toBe("Twenty-One");
+    expect(numberToWords(100)).toBe("One Hundred");
+    expect(numberToWords(101)).toBe("One Hundred One");
+  });
+
+  it("singularizes 'Rupee' for an amount of exactly one", () => {
+    expect(amountInWords(toPaisa(1))).toBe("One Rupee Only");
+  });
+
+  it("appends a paisa remainder in words", () => {
+    expect(amountInWords(toPaisa(1000) + 50)).toBe("One Thousand Rupees and Fifty Paisa Only");
+  });
+
+  it("handles a pure-paisa amount with zero rupees", () => {
+    expect(amountInWords(25)).toBe("Zero Rupees and Twenty-Five Paisa Only");
   });
 });
