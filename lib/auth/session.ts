@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
@@ -51,7 +52,12 @@ export async function createSession(userId: string): Promise<string> {
   return token;
 }
 
-export async function validateRequest(): Promise<
+// Runs on every request, often several times (layout + page + actions all
+// call requireAuth/requireRole). React's `cache` dedupes those to a single
+// execution per request, and the session+user lookup is one joined query
+// rather than two sequential round-trips — at ~90ms each against a remote
+// database, that difference is visible on every single navigation.
+export const validateRequest = cache(async function validateRequest(): Promise<
   { session: { id: string; expiresAt: number }; user: SessionUser } | { session: null; user: null }
 > {
   const store = await cookies();
@@ -59,9 +65,22 @@ export async function validateRequest(): Promise<
   if (!token) return { session: null, user: null };
 
   const sessionId = await hashToken(token);
-  const row = await db.query.sessions.findFirst({
-    where: eq(sessions.id, sessionId),
-  });
+  const [row] = await db
+    .select({
+      sessionId: sessions.id,
+      expiresAt: sessions.expiresAt,
+      id: users.id,
+      username: users.username,
+      fullName: users.fullName,
+      role: users.role,
+      active: users.active,
+      mustChangePassword: users.mustChangePassword,
+    })
+    .from(sessions)
+    .innerJoin(users, eq(users.id, sessions.userId))
+    .where(eq(sessions.id, sessionId))
+    .limit(1);
+
   if (!row) return { session: null, user: null };
 
   if (row.expiresAt < Date.now()) {
@@ -69,13 +88,16 @@ export async function validateRequest(): Promise<
     return { session: null, user: null };
   }
 
-  const userRow = await db.query.users.findFirst({ where: eq(users.id, row.userId) });
-  if (!userRow) return { session: null, user: null };
-
-  // Sliding expiry: renew once past the halfway point of its lifetime.
+  // Sliding expiry: renew once past the halfway point of its lifetime. The
+  // write isn't awaited — nothing in the response depends on it, and making
+  // every request wait on it just to extend a 30-day cookie is wasteful.
   if (row.expiresAt - Date.now() < SESSION_RENEW_THRESHOLD_MS) {
     const expiresAt = Date.now() + SESSION_DURATION_MS;
-    await db.update(sessions).set({ expiresAt }).where(eq(sessions.id, sessionId));
+    void db
+      .update(sessions)
+      .set({ expiresAt })
+      .where(eq(sessions.id, sessionId))
+      .catch((err) => console.error("Session renewal failed", err));
     store.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -86,17 +108,17 @@ export async function validateRequest(): Promise<
   }
 
   return {
-    session: { id: row.id, expiresAt: row.expiresAt },
+    session: { id: row.sessionId, expiresAt: row.expiresAt },
     user: {
-      id: userRow.id,
-      username: userRow.username,
-      fullName: userRow.fullName,
-      role: userRow.role as SessionUser["role"],
-      active: userRow.active === 1,
-      mustChangePassword: userRow.mustChangePassword === 1,
+      id: row.id,
+      username: row.username,
+      fullName: row.fullName,
+      role: row.role as SessionUser["role"],
+      active: row.active === 1,
+      mustChangePassword: row.mustChangePassword === 1,
     },
   };
-}
+});
 
 export async function invalidateSession(sessionId: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, sessionId));

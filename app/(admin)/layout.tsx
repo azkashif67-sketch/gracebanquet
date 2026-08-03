@@ -2,21 +2,20 @@ import { requireAuth } from "@/lib/auth/require-role";
 import { navItemsForRole } from "@/lib/auth/permissions";
 import { Sidebar } from "@/components/nav/sidebar";
 import { Header } from "@/components/nav/header";
-import { getNotificationsForUser, getUnreadCount } from "@/lib/db/queries/notifications";
+import { getNotificationsForUser } from "@/lib/db/queries/notifications";
 
 // Notifications are only *generated* on dashboard load (spec §9.12) — this
 // shared layout wraps every admin page, so calling generateNotifications()
 // here (as an earlier version did) reran its dues/quote-expiry checks on
 // every single navigation across the whole app, not just the dashboard.
-// This layout only reads the already-generated list for the bell.
+// This layout only reads the already-generated list for the bell, in a
+// single query — it wraps every page, so its cost is paid on every click.
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await requireAuth();
   const items = navItemsForRole(user.role);
 
-  const [notifications, unreadCount] = await Promise.all([
-    getNotificationsForUser(user.id),
-    getUnreadCount(user.id),
-  ]);
+  const notifications = await getNotificationsForUser(user.id);
+  const unreadCount = notifications.reduce((n, x) => (x.read ? n : n + 1), 0);
 
   return (
     <div className="flex min-h-screen flex-1">

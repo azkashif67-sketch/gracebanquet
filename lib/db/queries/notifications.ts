@@ -1,11 +1,14 @@
 import "server-only";
-import { and, desc, eq, gte, isNull } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../index";
 import { notificationReads, notifications } from "../schema";
 import { formatPKR } from "../../calculations";
 import { getDuesAlerts } from "./bookings";
 import { getExpiringQuotations } from "./quotations";
+
+type DuesAlerts = Awaited<ReturnType<typeof getDuesAlerts>>;
+type ExpiringQuotations = Awaited<ReturnType<typeof getExpiringQuotations>>;
 
 type Severity = "info" | "warning" | "critical";
 
@@ -28,20 +31,26 @@ function startOfTodayEpoch(): number {
 const draftKey = (d: Pick<NotificationDraft, "type" | "entityType" | "entityId">) =>
   `${d.type}:${d.entityType}:${d.entityId}`;
 
-// Time-based notifications are computed on render (dashboard load / panel
-// open) and deduplicated per day, rather than pushed by a cron — spec §9.12.
-// Event-based ones (new_inquiry) are written inline where they happen
-// instead (see app/(admin)/inquiries/actions.ts).
+// Time-based notifications are computed on dashboard load and deduplicated
+// per day, rather than pushed by a cron — spec §9.12. Event-based ones
+// (new_inquiry) are written inline where they happen instead (see
+// app/(admin)/inquiries/actions.ts).
 //
-// This runs on every admin/manager page load (see app/(admin)/layout.tsx),
-// so it must stay to a small, fixed number of round-trips regardless of how
-// many candidate notifications there are — one read of today's existing
-// rows, then one batched insert. The original version issued a SELECT (and
-// often an INSERT) per candidate inside a sequential loop, which turned
-// every page view into dozens of round-trips against the remote Turso
-// connection and was the main cause of the app feeling slow.
-export async function generateNotifications(): Promise<void> {
-  const [dues, expiringQuotes] = await Promise.all([getDuesAlerts(), getExpiringQuotations(3)]);
+// Kept to a small, fixed number of round-trips regardless of how many
+// candidate notifications there are: one read of today's existing rows, then
+// one batched insert. Callers that have already loaded the dues/quotes data
+// for their own rendering should pass it in rather than making this refetch
+// it — the dashboard does exactly that.
+export async function generateNotifications(prefetched?: {
+  dues: DuesAlerts;
+  expiringQuotes: ExpiringQuotations;
+}): Promise<void> {
+  const { dues, expiringQuotes } = prefetched ?? {
+    ...(await (async () => {
+      const [d, q] = await Promise.all([getDuesAlerts(), getExpiringQuotations(3)]);
+      return { dues: d, expiringQuotes: q };
+    })()),
+  };
 
   const drafts: NotificationDraft[] = [
     ...dues.overdue.map((b) => ({
@@ -152,14 +161,3 @@ export async function getNotificationsForUser(userId: string, limit = 30): Promi
   return rows.map((r) => ({ ...r, read: r.readAt !== null }));
 }
 
-export async function getUnreadCount(userId: string): Promise<number> {
-  const rows = await db
-    .select({ id: notifications.id })
-    .from(notifications)
-    .leftJoin(
-      notificationReads,
-      and(eq(notificationReads.notificationId, notifications.id), eq(notificationReads.userId, userId)),
-    )
-    .where(isNull(notificationReads.readAt));
-  return rows.length;
-}
