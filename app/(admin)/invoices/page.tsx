@@ -33,7 +33,7 @@ export default async function InvoicesPage({
 }: {
   searchParams: Promise<{ q?: string; status?: string; from?: string; to?: string }>;
 }) {
-  await requireRole("admin", "manager");
+  await requireRole("admin");
   const params = await searchParams;
   const status =
     params.status && ["paid", "partial", "unpaid", "overdue"].includes(params.status)

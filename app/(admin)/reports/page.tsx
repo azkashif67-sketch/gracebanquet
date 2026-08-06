@@ -3,14 +3,29 @@ import { requireRole } from "@/lib/auth/require-role";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function ReportsPage() {
-  const user = await requireRole("admin", "manager");
+  await requireRole("admin");
 
   const cards = [
-    { href: "/reports/revenue", title: "Monthly Booking Revenue", description: "Revenue, discounts, and collections by event date." },
-    { href: "/reports/receivables", title: "Outstanding Receivables", description: "Every open balance, aged by days overdue." },
-    ...(user.role === "admin"
-      ? [{ href: "/reports/tax", title: "Monthly Tax Report", description: "Tax collected per invoice, grouped by tax — built for FBR filing." }]
-      : []),
+    {
+      href: "/reports/profit-loss",
+      title: "Profit & Loss",
+      description: "Revenue less sales tax and expenses for a period — the bottom line.",
+    },
+    {
+      href: "/reports/revenue",
+      title: "Monthly Booking Revenue",
+      description: "Revenue, discounts, and collections by event date.",
+    },
+    {
+      href: "/reports/receivables",
+      title: "Outstanding Receivables",
+      description: "Every open balance, aged by days overdue.",
+    },
+    {
+      href: "/reports/tax",
+      title: "Monthly Tax Report",
+      description: "Sales tax per invoice, grouped by tax — built for filing.",
+    },
   ];
 
   return (

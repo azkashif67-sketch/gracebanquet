@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -11,7 +11,6 @@ import { requireRole } from "@/lib/auth/require-role";
 import { audit } from "@/lib/audit";
 import { calculateTotals } from "@/lib/calculations";
 import { nextQuoteNo } from "@/lib/db/operations";
-import { getVenueSettings } from "@/lib/db/queries/settings";
 
 const lineSchema = z.object({
   kind: z.enum(["service", "extra"]),
@@ -31,6 +30,7 @@ const quotationSchema = z.object({
   eventSlotPref: z.enum(["day", "night"]).optional(),
   hallPref: z.string().optional(),
   guestCount: z.number().int().positive().optional(),
+  hallRentPaisa: z.number().int().nonnegative(),
   lines: z.array(lineSchema),
   discountAmountPaisa: z.number().int().nonnegative(),
   taxIds: z.array(z.string()),
@@ -47,24 +47,26 @@ export interface ActionResult {
 }
 
 export async function createQuotation(input: QuotationInput): Promise<ActionResult> {
-  const user = await requireRole("admin", "manager");
+  const user = await requireRole("admin");
   const parsed = quotationSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   const data = parsed.data;
 
-  const venueSettings = await getVenueSettings();
   const selectedTaxes = data.taxIds.length
-    ? await db.select().from(taxes).where(inArray(taxes.id, data.taxIds))
+    ? await db
+        .select()
+        .from(taxes)
+        .where(and(inArray(taxes.id, data.taxIds), eq(taxes.active, 1), isNull(taxes.deletedAt)))
     : [];
 
   const serviceLines = data.lines.filter((l) => l.kind === "service");
   const extraLines = data.lines.filter((l) => l.kind === "extra");
   const totals = calculateTotals({
-    serviceLines: serviceLines.map((l) => ({ qty: l.qty, rate: l.ratePaisa, taxable: l.taxable })),
-    extraLines: extraLines.map((l) => ({ qty: l.qty, rate: l.ratePaisa, taxable: l.taxable })),
+    hallRent: data.hallRentPaisa,
+    serviceLines: serviceLines.map((l) => ({ qty: l.qty, rate: l.ratePaisa })),
+    extraLines: extraLines.map((l) => ({ qty: l.qty, rate: l.ratePaisa })),
     discountAmount: data.discountAmountPaisa,
     taxes: selectedTaxes.map((t) => ({ id: t.id, name: t.name, rateBps: t.rate })),
-    taxOnDiscounted: venueSettings.taxOnDiscounted,
   });
 
   const id = nanoid();
@@ -84,6 +86,7 @@ export async function createQuotation(input: QuotationInput): Promise<ActionResu
       eventSlotPref: data.eventSlotPref || null,
       hallPref: data.hallPref || null,
       guestCount: data.guestCount ?? null,
+      hallRent: data.hallRentPaisa,
       subtotal: totals.subtotal,
       discountAmount: totals.discount,
       taxAmount: totals.taxAmount,
@@ -140,7 +143,7 @@ export async function createQuotation(input: QuotationInput): Promise<ActionResu
 const statusSchema = z.enum(["sent", "accepted", "declined"]);
 
 export async function setQuotationStatus(id: string, status: z.infer<typeof statusSchema>): Promise<ActionResult> {
-  const user = await requireRole("admin", "manager");
+  const user = await requireRole("admin");
   const parsed = statusSchema.safeParse(status);
   if (!parsed.success) return { error: "Invalid status." };
 
@@ -167,7 +170,7 @@ export async function setQuotationStatus(id: string, status: z.infer<typeof stat
 }
 
 export async function deleteQuotation(id: string): Promise<ActionResult> {
-  const user = await requireRole("admin", "manager");
+  const user = await requireRole("admin");
   const before = await db.query.quotations.findFirst({ where: eq(quotations.id, id) });
   if (!before) return { error: "Quotation not found." };
 

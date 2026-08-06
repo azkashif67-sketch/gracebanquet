@@ -18,7 +18,7 @@ export default async function RevenueReportPage({
 }: {
   searchParams: Promise<{ from?: string; to?: string; eventType?: string }>;
 }) {
-  await requireRole("admin", "manager");
+  await requireRole("admin");
   const params = await searchParams;
 
   const rows = await getRevenueReport({

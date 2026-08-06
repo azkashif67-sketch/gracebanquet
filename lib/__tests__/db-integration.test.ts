@@ -203,4 +203,55 @@ describe("checkAvailability", () => {
     );
     expect(result.available).toBe(true);
   });
+
+  it("excludes a booking from its own conflict check when editing", async () => {
+    await testDb.insert(schema.bookings).values({
+      ...baseBooking,
+      id: "bkg-edit",
+      invoiceNo: "INV-TEST-EDIT",
+      eventDate: "2026-11-20",
+      eventSlot: "night",
+      hallSection: "Main Hall",
+      guestCount: 100,
+      status: "confirmed",
+    });
+
+    // Without the exclusion an edit would always collide with itself.
+    const withoutExclusion = await checkAvailability(
+      { eventDate: "2026-11-20", eventSlot: "night", hallSection: "Main Hall" },
+      testDb,
+    );
+    expect(withoutExclusion.available).toBe(false);
+
+    const withExclusion = await checkAvailability(
+      {
+        eventDate: "2026-11-20",
+        eventSlot: "night",
+        hallSection: "Main Hall",
+        excludeBookingId: "bkg-edit",
+      },
+      testDb,
+    );
+    expect(withExclusion.available).toBe(true);
+  });
+
+  it("soft-deleted bookings do not block the slot", async () => {
+    await testDb.insert(schema.bookings).values({
+      ...baseBooking,
+      id: "bkg-deleted",
+      invoiceNo: "INV-TEST-DEL",
+      eventDate: "2026-12-01",
+      eventSlot: "day",
+      hallSection: "Main Hall",
+      guestCount: 100,
+      status: "confirmed",
+      deletedAt: Math.floor(Date.now() / 1000),
+    });
+
+    const result = await checkAvailability(
+      { eventDate: "2026-12-01", eventSlot: "day", hallSection: "Main Hall" },
+      testDb,
+    );
+    expect(result.available).toBe(true);
+  });
 });

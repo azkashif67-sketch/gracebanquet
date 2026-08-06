@@ -46,7 +46,7 @@ export interface ActionResult {
 }
 
 export async function createService(input: ServiceInput): Promise<ActionResult> {
-  const user = await requireRole("admin", "manager");
+  const user = await requireRole("admin");
   const parsed = serviceSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   const data = parsed.data;
@@ -99,7 +99,7 @@ export async function createService(input: ServiceInput): Promise<ActionResult> 
 }
 
 export async function updateService(id: string, input: ServiceInput): Promise<ActionResult> {
-  const user = await requireRole("admin", "manager");
+  const user = await requireRole("admin");
   const parsed = serviceSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   const data = parsed.data;
@@ -181,7 +181,7 @@ export async function updateService(id: string, input: ServiceInput): Promise<Ac
 export async function deleteOrDeactivateService(
   id: string,
 ): Promise<ActionResult & { deactivated?: boolean }> {
-  const user = await requireRole("admin", "manager");
+  const user = await requireRole("admin");
 
   const before = await db.query.services.findFirst({ where: eq(services.id, id) });
   if (!before) return { error: "Service not found." };

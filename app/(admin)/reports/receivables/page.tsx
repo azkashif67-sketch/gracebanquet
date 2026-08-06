@@ -27,7 +27,7 @@ const BUCKET_VARIANT: Record<ReceivableRow["bucket"], "secondary" | "default" | 
 };
 
 export default async function ReceivablesReportPage() {
-  await requireRole("admin", "manager");
+  await requireRole("admin");
   const rows = await getReceivablesAged();
 
   const sorted = [...rows].sort((a, b) => b.daysOverdue - a.daysOverdue);

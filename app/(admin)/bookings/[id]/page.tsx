@@ -15,24 +15,31 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { RecordPaymentDialog } from "@/components/bookings/record-payment-dialog";
+import { CancelBookingDialog } from "@/components/bookings/cancel-booking-dialog";
+import { DeleteBookingDialog } from "@/components/bookings/delete-booking-dialog";
 
 export default async function BookingDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ created?: string }>;
+  searchParams: Promise<{ created?: string; updated?: string }>;
 }) {
   const user = await requireAuth();
   const { id } = await params;
-  const { created } = await searchParams;
+  const { created, updated } = await searchParams;
 
   const detail = await getBookingDetail(id);
-  if (!detail) notFound();
+  if (!detail || detail.booking.deletedAt) notFound();
   const { booking, serviceLines, menu, extras, taxLines, payments, installments } = detail;
 
   const showMoney = user.role !== "staff";
   const canRecordPayment = user.role === "admin" || user.role === "manager";
+  const isCancelled = booking.status === "cancelled";
+  const canEdit =
+    !isCancelled &&
+    (user.role === "admin" || (user.role === "manager" && booking.createdBy === user.id));
+  const isAdmin = user.role === "admin";
   const pendingInstallments = installments.filter((i) => i.status !== "paid");
 
   return (
@@ -42,15 +49,60 @@ export default async function BookingDetailPage({
           Booking {booking.invoiceNo} created successfully.
         </div>
       )}
+      {updated === "1" && (
+        <div className="rounded-md border border-green-400 bg-green-50 p-3 text-sm dark:bg-green-950">
+          Booking {booking.invoiceNo} updated.
+        </div>
+      )}
+      {isCancelled && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+          <p className="font-medium">This booking is cancelled.</p>
+          {booking.cancelReason && <p>Reason: {booking.cancelReason}</p>}
+          {booking.advanceHandling === "forfeit" && booking.amountPaid > 0 && (
+            <p>{formatPKR(booking.amountPaid)} was forfeited and stays recorded as revenue.</p>
+          )}
+          {booking.advanceHandling === "refund" && (booking.refundAmount ?? 0) > 0 && (
+            <p>{formatPKR(booking.refundAmount ?? 0)} was refunded to the client.</p>
+          )}
+        </div>
+      )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold">{booking.invoiceNo ?? "(draft)"}</h1>
-          <Badge className="capitalize">{booking.status}</Badge>
+          <Badge className="capitalize" variant={isCancelled ? "destructive" : "default"}>
+            {booking.status}
+          </Badge>
         </div>
-        {showMoney && (
-          <Button render={<Link href={`/bookings/${id}/invoice`}>Print Invoice</Link>} />
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {showMoney && (
+            <>
+              <Button
+                variant="outline"
+                render={<Link href={`/bookings/${id}/receipt`}>Print Receipt</Link>}
+              />
+              <Button
+                variant="outline"
+                render={<Link href={`/bookings/${id}/invoice`}>Print Invoice</Link>}
+              />
+            </>
+          )}
+          {canEdit && <Button render={<Link href={`/bookings/${id}/edit`}>Edit</Link>} />}
+          {isAdmin && !isCancelled && (
+            <CancelBookingDialog
+              bookingId={id}
+              invoiceNo={booking.invoiceNo}
+              amountPaid={booking.amountPaid}
+            />
+          )}
+          {isAdmin && (
+            <DeleteBookingDialog
+              bookingId={id}
+              invoiceNo={booking.invoiceNo}
+              redirectTo="/bookings"
+            />
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -254,6 +306,11 @@ export default async function BookingDetailPage({
             <CardTitle className="text-base">Charges</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-1 text-sm">
+            <Row label="Hall Rent" value={formatPKR(booking.hallRent)} />
+            <Row
+              label="Services & extras"
+              value={formatPKR(booking.subtotal - booking.hallRent)}
+            />
             <Row label="Subtotal" value={formatPKR(booking.subtotal)} />
             {booking.discountAmount > 0 && (
               <Row
@@ -261,10 +318,6 @@ export default async function BookingDetailPage({
                 value={`(${formatPKR(booking.discountAmount)})`}
               />
             )}
-            <Row label="Taxable Amount" value={formatPKR(booking.taxableAmount)} />
-            {taxLines.map((t) => (
-              <Row key={t.id} label={`${t.taxName} ${(t.rate / 100).toFixed(2)}%`} value={formatPKR(t.taxAmount)} />
-            ))}
             <Row label="Grand Total" value={formatPKR(booking.grandTotal)} bold />
             <Row label="Paid" value={formatPKR(booking.amountPaid)} />
             <Row
@@ -273,6 +326,28 @@ export default async function BookingDetailPage({
               bold
             />
             {booking.dueDate && <Row label="Due Date" value={booking.dueDate} />}
+
+            {/* Sales tax is already inside the hall rent — shown here so the
+                venue knows what it owes, never on the client's receipt. */}
+            {booking.taxAmount > 0 && (
+              <div className="mt-3 border-t pt-2">
+                <p className="mb-1 text-xs font-medium uppercase text-muted-foreground">
+                  Internal — sales tax included in the above
+                </p>
+                {taxLines.map((t) => (
+                  <Row
+                    key={t.id}
+                    label={`${t.taxName} ${(t.rate / 100).toFixed(2)}% of rent`}
+                    value={formatPKR(t.taxAmount)}
+                  />
+                ))}
+                <Row
+                  label="Net of tax"
+                  value={formatPKR(booking.grandTotal - booking.taxAmount)}
+                  bold
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

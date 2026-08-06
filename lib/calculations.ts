@@ -31,7 +31,6 @@ export const formatPKR = (paisa: number): string =>
 export interface TotalsLine {
   qty: number;
   rate: number;
-  taxable: boolean;
 }
 
 export interface TaxInput {
@@ -41,11 +40,11 @@ export interface TaxInput {
 }
 
 export interface TotalsInput {
+  hallRent: number; // paisa — the ONLY tax base
   serviceLines: TotalsLine[];
   extraLines: TotalsLine[];
   discountAmount: number;
   taxes: TaxInput[]; // the taxes applied to this booking
-  taxOnDiscounted: boolean; // from settings
 }
 
 export interface TaxLine {
@@ -58,38 +57,47 @@ export interface TaxLine {
 export interface TotalsResult {
   subtotal: number;
   discount: number;
+  /** The base tax is computed on — always the hall rent. */
   taxableAmount: number;
   taxLines: TaxLine[];
+  /** Informational only. Already inside grandTotal; never added to it. */
   taxAmount: number;
   grandTotal: number;
+  /** What the venue actually keeps once the tax is handed over. */
+  netOfTax: number;
 }
 
+/**
+ * Sales tax here is INCLUSIVE and INTERNAL:
+ *
+ *   - It applies only to the hall rent — never to catering, decor, sound, or
+ *     any extra. Those lines are not taxed at all.
+ *   - It is NOT added to what the customer pays. The rent is quoted
+ *     tax-inclusive, so `grandTotal` is just `subtotal - discount`. The tax
+ *     figure exists so the venue knows what it owes; the customer's document
+ *     only ever says "inclusive of applicable sales tax".
+ *   - A discount does not shrink the tax base. Tax is 16% of the rent as
+ *     charged, per the venue's filing practice.
+ *
+ * Multiple taxes stay additive on the same base (never compounding), and each
+ * is snapshotted into `booking_taxes` at save time so changing a rate later
+ * can never rewrite an issued document.
+ */
 export function calculateTotals(input: TotalsInput): TotalsResult {
-  const lineTotal = (l: { qty: number; rate: number }) => l.qty * l.rate;
+  const lineTotal = (l: TotalsLine) => l.qty * l.rate;
+
+  const hallRent = Math.max(0, input.hallRent);
 
   const subtotal =
+    hallRent +
     input.serviceLines.reduce((s, l) => s + lineTotal(l), 0) +
     input.extraLines.reduce((s, l) => s + lineTotal(l), 0);
 
   const discount = Math.min(input.discountAmount, subtotal);
 
-  // Base on which tax is charged
-  const taxableBase = input.taxOnDiscounted ? subtotal - discount : subtotal;
+  // Hall rent is the entire tax base — undiscounted.
+  const taxableAmount = hallRent;
 
-  // Only taxable lines contribute; compute their proportion of the base
-  const taxableLineSum =
-    input.serviceLines
-      .filter((l) => l.taxable)
-      .reduce((s, l) => s + lineTotal(l), 0) +
-    input.extraLines
-      .filter((l) => l.taxable)
-      .reduce((s, l) => s + lineTotal(l), 0);
-
-  const taxableProportion = subtotal === 0 ? 0 : taxableLineSum / subtotal;
-  const taxableAmount = Math.round(taxableBase * taxableProportion);
-
-  // Each applicable tax is computed on the same taxable amount, then summed.
-  // Additive, never compounding — that's what keeps two taxes correct.
   const taxLines: TaxLine[] = input.taxes.map((t) => ({
     id: t.id,
     name: t.name,
@@ -98,9 +106,11 @@ export function calculateTotals(input: TotalsInput): TotalsResult {
   }));
   const taxAmount = taxLines.reduce((s, t) => s + t.amount, 0);
 
-  const grandTotal = subtotal - discount + taxAmount;
+  // Tax is already inside the rent, so it is deliberately absent here.
+  const grandTotal = subtotal - discount;
+  const netOfTax = grandTotal - taxAmount;
 
-  return { subtotal, discount, taxableAmount, taxLines, taxAmount, grandTotal };
+  return { subtotal, discount, taxableAmount, taxLines, taxAmount, grandTotal, netOfTax };
 }
 
 // ---------------------------------------------------------------------------

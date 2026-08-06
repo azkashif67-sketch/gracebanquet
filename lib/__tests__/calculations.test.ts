@@ -16,120 +16,139 @@ describe("money helpers", () => {
   });
 });
 
-describe("calculateTotals", () => {
-  it("computes a simple single-tax booking with no discount", () => {
+const SALES_TAX = { id: "t1", name: "Sales Tax", rateBps: 1600 };
+
+describe("calculateTotals — inclusive, hall-rent-only sales tax", () => {
+  it("does not add tax to what the customer pays", () => {
+    // Rent 100,000 + catering 630,000. Tax is 16% of the RENT only and is
+    // already inside that rent, so the customer still owes exactly 730,000.
     const result = calculateTotals({
-      serviceLines: [{ qty: 350, rate: toPaisa(1800), taxable: true }],
+      hallRent: toPaisa(100000),
+      serviceLines: [{ qty: 350, rate: toPaisa(1800) }],
       extraLines: [],
       discountAmount: 0,
-      taxes: [{ id: "t1", name: "Punjab Sales Tax", rateBps: 1600 }],
-      taxOnDiscounted: false,
+      taxes: [SALES_TAX],
     });
 
-    expect(result.subtotal).toBe(63000000);
-    expect(result.discount).toBe(0);
-    expect(result.taxableAmount).toBe(63000000);
-    expect(result.taxLines).toEqual([
-      { id: "t1", name: "Punjab Sales Tax", rateBps: 1600, amount: 10080000 },
-    ]);
-    expect(result.taxAmount).toBe(10080000);
-    expect(result.grandTotal).toBe(73080000);
+    expect(toRupees(result.subtotal)).toBe(730000);
+    expect(toRupees(result.grandTotal)).toBe(730000); // tax NOT added
+    expect(toRupees(result.taxableAmount)).toBe(100000); // rent only
+    expect(toRupees(result.taxAmount)).toBe(16000); // 16% of rent
+    expect(toRupees(result.netOfTax)).toBe(714000); // what the venue keeps
   });
 
-  it("matches the worked example from the spec (multi-tax, discount, extras)", () => {
-    // Spec §9.8 sample invoice: subtotal 865,000; discount 40,000;
-    // taxable 825,000; Punjab Sales Tax 16% = 132,000; Service Charge 5% = 41,250;
-    // grand total 998,250. All lines taxable, tax charged on the discounted base.
+  it("taxes the hall rent only — services and extras never enter the base", () => {
+    const withoutExtras = calculateTotals({
+      hallRent: toPaisa(100000),
+      serviceLines: [],
+      extraLines: [],
+      discountAmount: 0,
+      taxes: [SALES_TAX],
+    });
+    const withExtras = calculateTotals({
+      hallRent: toPaisa(100000),
+      serviceLines: [{ qty: 350, rate: toPaisa(1800) }],
+      extraLines: [{ qty: 1, rate: toPaisa(25000) }],
+      discountAmount: 0,
+      taxes: [SALES_TAX],
+    });
+
+    // Same rent ⇒ same tax, no matter how much else is on the booking.
+    expect(withExtras.taxAmount).toBe(withoutExtras.taxAmount);
+    expect(toRupees(withExtras.taxAmount)).toBe(16000);
+  });
+
+  it("does not shrink the tax base when a discount is applied", () => {
     const result = calculateTotals({
-      serviceLines: [
-        { qty: 350, rate: toPaisa(1800), taxable: true }, // 630,000
-        { qty: 1, rate: toPaisa(45000), taxable: true }, // 45,000
-        { qty: 1, rate: toPaisa(65000), taxable: true }, // 65,000
-        { qty: 1, rate: toPaisa(85000), taxable: true }, // 85,000
-      ],
-      extraLines: [
-        { qty: 1, rate: toPaisa(25000), taxable: true },
-        { qty: 1, rate: toPaisa(15000), taxable: true },
-      ],
+      hallRent: toPaisa(100000),
+      serviceLines: [{ qty: 1, rate: toPaisa(50000) }],
+      extraLines: [],
       discountAmount: toPaisa(40000),
-      taxes: [
-        { id: "sales", name: "Punjab Sales Tax", rateBps: 1600 },
-        { id: "service", name: "Service Charge", rateBps: 500 },
-      ],
-      taxOnDiscounted: true,
+      taxes: [SALES_TAX],
     });
 
-    expect(toRupees(result.subtotal)).toBe(865000);
+    expect(toRupees(result.subtotal)).toBe(150000);
     expect(toRupees(result.discount)).toBe(40000);
-    expect(toRupees(result.taxableAmount)).toBe(825000);
-    expect(toRupees(result.taxLines.find((t) => t.id === "sales")!.amount)).toBe(132000);
-    expect(toRupees(result.taxLines.find((t) => t.id === "service")!.amount)).toBe(41250);
-    expect(toRupees(result.taxAmount)).toBe(173250);
-    expect(toRupees(result.grandTotal)).toBe(998250);
+    expect(toRupees(result.grandTotal)).toBe(110000);
+    // Tax still 16% of the full rent, unaffected by the discount.
+    expect(toRupees(result.taxableAmount)).toBe(100000);
+    expect(toRupees(result.taxAmount)).toBe(16000);
   });
 
-  it("does not compound multiple taxes — both compute on the same taxable base", () => {
+  it("charges no tax when there is no hall rent", () => {
     const result = calculateTotals({
-      serviceLines: [{ qty: 1, rate: 10000, taxable: true }],
+      hallRent: 0,
+      serviceLines: [{ qty: 350, rate: toPaisa(1800) }],
+      extraLines: [{ qty: 1, rate: toPaisa(25000) }],
+      discountAmount: 0,
+      taxes: [SALES_TAX],
+    });
+
+    expect(toRupees(result.subtotal)).toBe(655000);
+    expect(result.taxableAmount).toBe(0);
+    expect(result.taxAmount).toBe(0);
+    expect(result.netOfTax).toBe(result.grandTotal);
+  });
+
+  it("keeps multiple taxes additive on the rent, never compounding", () => {
+    const result = calculateTotals({
+      hallRent: toPaisa(100000),
+      serviceLines: [],
       extraLines: [],
       discountAmount: 0,
       taxes: [
-        { id: "a", name: "Tax A", rateBps: 1600 },
-        { id: "b", name: "Tax B", rateBps: 500 },
+        { id: "a", name: "Sales Tax", rateBps: 1600 },
+        { id: "b", name: "Service Charge", rateBps: 500 },
       ],
-      taxOnDiscounted: false,
     });
 
-    // 21% of 10,000 = 2,100 — not 16% then 5% of the already-taxed total (2,110.4...)
-    expect(result.taxAmount).toBe(2100);
-    expect(result.grandTotal).toBe(12100);
+    // 21% of 100,000 = 21,000 — not 16% then 5% of the already-taxed figure.
+    expect(toRupees(result.taxAmount)).toBe(21000);
+    expect(toRupees(result.grandTotal)).toBe(100000); // still not added
+    expect(toRupees(result.netOfTax)).toBe(79000);
   });
 
-  it("only taxes the taxable proportion of a mixed taxable/non-taxable subtotal", () => {
+  it("caps the discount at the subtotal so the grand total never goes negative", () => {
     const result = calculateTotals({
-      serviceLines: [
-        { qty: 1, rate: 60000, taxable: true },
-        { qty: 1, rate: 40000, taxable: false },
-      ],
-      extraLines: [],
-      discountAmount: 0,
-      taxes: [{ id: "t1", name: "Tax", rateBps: 1000 }], // 10%
-      taxOnDiscounted: false,
-    });
-
-    expect(result.subtotal).toBe(100000);
-    // 60% of the subtotal is taxable
-    expect(result.taxableAmount).toBe(60000);
-    expect(result.taxAmount).toBe(6000);
-    expect(result.grandTotal).toBe(106000);
-  });
-
-  it("caps the discount at the subtotal so grand total never goes negative", () => {
-    const result = calculateTotals({
-      serviceLines: [{ qty: 1, rate: 1000, taxable: false }],
+      hallRent: 0,
+      serviceLines: [{ qty: 1, rate: 1000 }],
       extraLines: [],
       discountAmount: 5000,
       taxes: [],
-      taxOnDiscounted: true,
     });
 
     expect(result.discount).toBe(1000);
     expect(result.grandTotal).toBe(0);
   });
 
-  it("handles a zero-subtotal booking without dividing by zero", () => {
+  it("handles a completely empty booking", () => {
     const result = calculateTotals({
+      hallRent: 0,
       serviceLines: [],
       extraLines: [],
       discountAmount: 0,
-      taxes: [{ id: "t1", name: "Tax", rateBps: 1600 }],
-      taxOnDiscounted: false,
+      taxes: [SALES_TAX],
     });
 
     expect(result.subtotal).toBe(0);
     expect(result.taxableAmount).toBe(0);
     expect(result.taxAmount).toBe(0);
     expect(result.grandTotal).toBe(0);
+    expect(result.netOfTax).toBe(0);
+  });
+
+  it("rounds tax to whole paisa", () => {
+    // 1,234.57 rent at 16% = 197.5312 rupees ⇒ 19753 paisa
+    const result = calculateTotals({
+      hallRent: 123457,
+      serviceLines: [],
+      extraLines: [],
+      discountAmount: 0,
+      taxes: [SALES_TAX],
+    });
+
+    expect(result.taxAmount).toBe(19753);
+    expect(Number.isInteger(result.taxAmount)).toBe(true);
   });
 });
 

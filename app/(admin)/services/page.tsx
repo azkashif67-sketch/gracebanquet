@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireAuth } from "@/lib/auth/require-role";
+import { requireRole } from "@/lib/auth/require-role";
 import { canManageServices } from "@/lib/auth/permissions";
 import { listServices } from "@/lib/db/queries/services";
 import { formatPKR } from "@/lib/calculations";
@@ -16,7 +16,7 @@ import {
 import { DeleteServiceButton } from "@/components/services/delete-service-button";
 
 export default async function ServicesPage() {
-  const user = await requireAuth();
+  const user = await requireRole("admin");
   const canManage = canManageServices(user.role);
   const rows = await listServices();
 

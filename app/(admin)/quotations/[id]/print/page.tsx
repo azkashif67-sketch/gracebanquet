@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireAuth } from "@/lib/auth/require-role";
+import { requireRole } from "@/lib/auth/require-role";
 import { getQuotationDetail } from "@/lib/db/queries/quotations";
 import { getVenueSettings } from "@/lib/db/queries/settings";
 import { formatPKR } from "@/lib/calculations";
@@ -10,7 +10,7 @@ export default async function QuotationPrintPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireAuth();
+  await requireRole("admin");
   const { id } = await params;
 
   const detail = await getQuotationDetail(id);

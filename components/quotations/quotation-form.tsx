@@ -62,6 +62,7 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
   const [hallPref, setHallPref] = useState(settings.halls[0] ?? "");
   const [guestCount, setGuestCount] = useState(initial?.guestCount ? String(initial.guestCount) : "");
   const [lines, setLines] = useState<LineUI[]>([]);
+  const [hallRentRupees, setHallRentRupees] = useState("");
   const [discountRupees, setDiscountRupees] = useState("0");
   const [selectedTaxIds, setSelectedTaxIds] = useState<string[]>(
     taxesAvailable.filter((t) => t.isDefault === 1).map((t) => t.id),
@@ -82,22 +83,24 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
     return map;
   }, [services, lines]);
 
+  const hallRentPaisa = toPaisa(Number(hallRentRupees) || 0);
+
   const totals = useMemo(
     () =>
       calculateTotals({
+        hallRent: hallRentPaisa,
         serviceLines: lines
           .filter((l) => l.kind === "service")
-          .map((l) => ({ qty: l.qty, rate: l.ratePaisa, taxable: l.taxable })),
+          .map((l) => ({ qty: l.qty, rate: l.ratePaisa })),
         extraLines: lines
           .filter((l) => l.kind === "extra")
-          .map((l) => ({ qty: l.qty, rate: l.ratePaisa, taxable: l.taxable })),
+          .map((l) => ({ qty: l.qty, rate: l.ratePaisa })),
         discountAmount: toPaisa(Number(discountRupees) || 0),
         taxes: taxesAvailable
           .filter((t) => selectedTaxIds.includes(t.id))
           .map((t) => ({ id: t.id, name: t.name, rateBps: t.rate })),
-        taxOnDiscounted: settings.taxOnDiscounted,
       }),
-    [lines, discountRupees, selectedTaxIds, taxesAvailable, settings.taxOnDiscounted],
+    [hallRentPaisa, lines, discountRupees, selectedTaxIds, taxesAvailable],
   );
 
   function addService(serviceId: string) {
@@ -122,6 +125,7 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
       eventType,
       eventDatePref: eventDatePref || undefined,
       eventSlotPref,
+      hallRentPaisa,
       hallPref: hallPref || undefined,
       guestCount: guestCount ? Number(guestCount) : undefined,
       lines: lines.map((l) => ({
@@ -303,13 +307,24 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
         </Button>
 
         <div className="grid grid-cols-2 gap-4">
+          <Field label="Hall rent (Rs)">
+            <Input
+              type="number"
+              min={0}
+              value={hallRentRupees}
+              onChange={(e) => setHallRentRupees(e.target.value)}
+            />
+          </Field>
           <Field label="Discount (Rs)">
             <Input type="number" value={discountRupees} onChange={(e) => setDiscountRupees(e.target.value)} />
           </Field>
         </div>
+        <p className="-mt-2 text-xs text-muted-foreground">
+          Hall rent is quoted inclusive of sales tax, and is the only amount tax is charged on.
+        </p>
 
         <div className="flex flex-col gap-2">
-          <label className="text-sm text-muted-foreground">Taxes applied</label>
+          <label className="text-sm text-muted-foreground">Taxes applied (on hall rent)</label>
           {taxesAvailable.map((t) => (
             <label key={t.id} className="flex items-center gap-2 text-sm">
               <Checkbox
@@ -336,6 +351,14 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
       <div className="w-64 shrink-0 self-start rounded-md border p-4 text-sm">
         <p className="mb-2 font-semibold">Summary</p>
         <div className="flex justify-between">
+          <span className="text-muted-foreground">Hall rent</span>
+          <span>{formatPKR(hallRentPaisa)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Services &amp; extras</span>
+          <span>{formatPKR(totals.subtotal - hallRentPaisa)}</span>
+        </div>
+        <div className="flex justify-between">
           <span className="text-muted-foreground">Subtotal</span>
           <span>{formatPKR(totals.subtotal)}</span>
         </div>
@@ -343,14 +366,16 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
           <span className="text-muted-foreground">Discount</span>
           <span>({formatPKR(totals.discount)})</span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Tax</span>
-          <span>{formatPKR(totals.taxAmount)}</span>
-        </div>
         <div className="mt-2 flex justify-between border-t pt-2 font-semibold">
           <span>Grand Total</span>
           <span>{formatPKR(totals.grandTotal)}</span>
         </div>
+        {totals.taxAmount > 0 && (
+          <div className="mt-2 flex justify-between border-t pt-2 text-xs text-muted-foreground">
+            <span>of which sales tax (internal)</span>
+            <span>{formatPKR(totals.taxAmount)}</span>
+          </div>
+        )}
       </div>
     </form>
   );

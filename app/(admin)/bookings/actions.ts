@@ -19,7 +19,7 @@ import {
   taxes,
 } from "@/lib/db/schema";
 import { requireRole } from "@/lib/auth/require-role";
-import { audit } from "@/lib/audit";
+import { audit, diff } from "@/lib/audit";
 import { calculateTotals } from "@/lib/calculations";
 import {
   checkAvailability,
@@ -27,7 +27,6 @@ import {
   nextReceiptNo,
   type AvailabilityResult,
 } from "@/lib/db/operations";
-import { getVenueSettings } from "@/lib/db/queries/settings";
 import { findClientByPhone } from "@/lib/db/queries/bookings";
 
 export async function lookupClientByPhone(phone: string) {
@@ -97,6 +96,7 @@ const bookingSchema = z.object({
   holdExpiresOn: z.string().optional(),
   overrideReason: z.string().optional(),
 
+  hallRentPaisa: z.number().int().nonnegative(),
   services: z.array(serviceLineSchema),
   menu: z.array(menuLineSchema),
   extras: z.array(extraLineSchema),
@@ -155,8 +155,6 @@ export async function createBooking(input: BookingInput): Promise<CreateBookingR
     return { error: "Only an admin can override an availability conflict." };
   }
 
-  const venueSettings = await getVenueSettings();
-
   let result: { id: string; invoiceNo: string };
   try {
     result = await db.transaction(async (tx) => {
@@ -175,25 +173,27 @@ export async function createBooking(input: BookingInput): Promise<CreateBookingR
       }
 
       // 2. Resolve taxes server-side (never trust a client-supplied rate) and
-      //    recompute totals inside the transaction.
+      //    recompute totals inside the transaction. Only live taxes apply —
+      //    a deactivated or deleted one must not attach to a new booking.
       const selectedTaxes = data.taxIds.length
-        ? await tx.select().from(taxes).where(inArray(taxes.id, data.taxIds))
+        ? await tx
+            .select()
+            .from(taxes)
+            .where(
+              and(
+                inArray(taxes.id, data.taxIds),
+                eq(taxes.active, 1),
+                isNull(taxes.deletedAt),
+              ),
+            )
         : [];
 
       const totals = calculateTotals({
-        serviceLines: data.services.map((s) => ({
-          qty: s.qty,
-          rate: s.ratePaisa,
-          taxable: s.taxable,
-        })),
-        extraLines: data.extras.map((e) => ({
-          qty: e.qty,
-          rate: e.ratePaisa,
-          taxable: e.taxable,
-        })),
+        hallRent: data.hallRentPaisa,
+        serviceLines: data.services.map((s) => ({ qty: s.qty, rate: s.ratePaisa })),
+        extraLines: data.extras.map((e) => ({ qty: e.qty, rate: e.ratePaisa })),
         discountAmount: data.discountAmountPaisa,
         taxes: selectedTaxes.map((t) => ({ id: t.id, name: t.name, rateBps: t.rate })),
-        taxOnDiscounted: venueSettings.taxOnDiscounted,
       });
 
       // 2b. An installment plan, if given, must reconcile to the grand total
@@ -231,6 +231,7 @@ export async function createBooking(input: BookingInput): Promise<CreateBookingR
         guestCount: data.guestCount,
         startTime: data.startTime || null,
         endTime: data.endTime || null,
+        hallRent: data.hallRentPaisa,
         subtotal: totals.subtotal,
         discountAmount: totals.discount,
         discountReason: data.discountReason || null,
@@ -458,5 +459,348 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
   revalidatePath(`/bookings/${data.bookingId}`);
   revalidatePath("/bookings");
   return { paymentId, overpaid: newBalance < 0 };
+}
+
+export interface ActionOutcome {
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Update booking (spec §9.4)
+// Admin may edit any booking; Manager only ones they created themselves.
+// A cancelled booking is read-only.
+// ---------------------------------------------------------------------------
+export async function updateBooking(
+  bookingId: string,
+  input: BookingInput,
+): Promise<CreateBookingResult> {
+  const user = await requireRole("admin", "manager");
+  const parsed = bookingSchema.safeParse(input);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid booking data." };
+  }
+  const data = parsed.data;
+
+  const before = await db.query.bookings.findFirst({ where: eq(bookings.id, bookingId) });
+  if (!before || before.deletedAt) return { error: "Booking not found." };
+  if (before.status === "cancelled") return { error: "A cancelled booking cannot be edited." };
+  if (user.role === "manager" && before.createdBy !== user.id) {
+    return { error: "You can only edit bookings you created." };
+  }
+  if (data.discountAmountPaisa > 0 && !data.discountReason) {
+    return { error: "Discount reason is required when a discount is applied." };
+  }
+  if (data.overrideReason && user.role !== "admin") {
+    return { error: "Only an admin can override an availability conflict." };
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      // Re-check availability, excluding this booking from its own conflict
+      // set — otherwise every edit would collide with itself.
+      const { available, conflicts } = await checkAvailability(
+        {
+          eventDate: data.eventDate,
+          eventSlot: data.eventSlot,
+          hallSection: data.hallSection,
+          excludeBookingId: bookingId,
+        },
+        tx,
+      );
+      if (!available && !data.overrideReason) throw new ConflictError(conflicts);
+
+      const selectedTaxes = data.taxIds.length
+        ? await tx
+            .select()
+            .from(taxes)
+            .where(
+              and(inArray(taxes.id, data.taxIds), eq(taxes.active, 1), isNull(taxes.deletedAt)),
+            )
+        : [];
+
+      const totals = calculateTotals({
+        hallRent: data.hallRentPaisa,
+        serviceLines: data.services.map((s) => ({ qty: s.qty, rate: s.ratePaisa })),
+        extraLines: data.extras.map((e) => ({ qty: e.qty, rate: e.ratePaisa })),
+        discountAmount: data.discountAmountPaisa,
+        taxes: selectedTaxes.map((t) => ({ id: t.id, name: t.name, rateBps: t.rate })),
+      });
+
+      // Payments already taken are untouched by an edit, so the balance is
+      // re-derived from them rather than from any advance field.
+      const [{ paid }] = await tx
+        .select({ paid: sql<number>`COALESCE(SUM(${payments.amount}), 0)` })
+        .from(payments)
+        .where(and(eq(payments.bookingId, bookingId), isNull(payments.deletedAt)));
+
+      if (totals.grandTotal < paid) {
+        throw new ValidationError(
+          "The new total is below what the client has already paid. Refund the difference first.",
+        );
+      }
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      await tx
+        .update(bookings)
+        .set({
+          clientName: data.clientName,
+          phone: data.phone,
+          altPhone: data.altPhone || null,
+          cnic: data.cnic || null,
+          address: data.address || null,
+          eventType: data.eventType,
+          eventDate: data.eventDate,
+          eventSlot: data.eventSlot,
+          hallSection: data.hallSection,
+          guestCount: data.guestCount,
+          startTime: data.startTime || null,
+          endTime: data.endTime || null,
+          hallRent: data.hallRentPaisa,
+          subtotal: totals.subtotal,
+          discountAmount: totals.discount,
+          discountReason: data.discountReason || null,
+          taxableAmount: totals.taxableAmount,
+          taxAmount: totals.taxAmount,
+          grandTotal: totals.grandTotal,
+          amountPaid: paid,
+          balanceDue: totals.grandTotal - paid,
+          dueDate: data.dueDate || null,
+          status: data.status,
+          holdExpiresOn: data.status === "tentative" ? data.holdExpiresOn || null : null,
+          internalNotes: data.internalNotes || null,
+          clientNotes: data.clientNotes || null,
+          specialInstructions: data.specialInstructions || null,
+          updatedAt: nowSec,
+        })
+        .where(eq(bookings.id, bookingId));
+
+      // Child rows are replaced wholesale — simpler and safer than diffing,
+      // and it's the snapshots that matter, not the row identities.
+      await tx.delete(bookingServices).where(eq(bookingServices.bookingId, bookingId));
+      await tx.delete(bookingExtras).where(eq(bookingExtras.bookingId, bookingId));
+      await tx.delete(bookingMenu).where(eq(bookingMenu.bookingId, bookingId));
+      await tx.delete(bookingTaxes).where(eq(bookingTaxes.bookingId, bookingId));
+
+      if (data.services.length) {
+        await tx.insert(bookingServices).values(
+          data.services.map((s, i) => ({
+            id: nanoid(),
+            bookingId,
+            serviceId: s.serviceId,
+            serviceName: s.serviceName,
+            pricingType: s.pricingType,
+            qty: s.qty,
+            rate: s.ratePaisa,
+            lineTotal: s.qty * s.ratePaisa,
+            taxable: s.taxable ? 1 : 0,
+            sortOrder: i,
+          })),
+        );
+      }
+      if (data.menu.length) {
+        await tx.insert(bookingMenu).values(
+          data.menu.map((m) => ({ id: nanoid(), bookingId, itemName: m.itemName, type: m.type })),
+        );
+      }
+      if (data.extras.length) {
+        await tx.insert(bookingExtras).values(
+          data.extras.map((e) => ({
+            id: nanoid(),
+            bookingId,
+            label: e.label,
+            qty: e.qty,
+            rate: e.ratePaisa,
+            lineTotal: e.qty * e.ratePaisa,
+            taxable: e.taxable ? 1 : 0,
+          })),
+        );
+      }
+      if (totals.taxLines.length) {
+        await tx.insert(bookingTaxes).values(
+          totals.taxLines.map((t) => ({
+            id: nanoid(),
+            bookingId,
+            taxId: t.id,
+            taxName: t.name,
+            rate: t.rateBps,
+            taxAmount: t.amount,
+          })),
+        );
+      }
+
+      await audit(tx, {
+        userId: user.id,
+        action: "update",
+        module: "booking",
+        recordId: bookingId,
+        summary: data.overrideReason
+          ? `Updated booking ${before.invoiceNo} (availability override: ${data.overrideReason})`
+          : `Updated booking ${before.invoiceNo}`,
+        changes: diff(
+          {
+            clientName: before.clientName,
+            eventDate: before.eventDate,
+            eventSlot: before.eventSlot,
+            guestCount: before.guestCount,
+            hallRent: before.hallRent,
+            grandTotal: before.grandTotal,
+            status: before.status,
+          },
+          {
+            clientName: data.clientName,
+            eventDate: data.eventDate,
+            eventSlot: data.eventSlot,
+            guestCount: data.guestCount,
+            hallRent: data.hallRentPaisa,
+            grandTotal: totals.grandTotal,
+            status: data.status,
+          },
+        ),
+      });
+    });
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return { error: "This date/slot is no longer available.", conflicts: err.conflicts };
+    }
+    if (err instanceof ValidationError) return { error: err.message };
+    throw err;
+  }
+
+  revalidatePath("/bookings");
+  revalidatePath(`/bookings/${bookingId}`);
+  revalidatePath("/schedule");
+  redirect(`/bookings/${bookingId}?updated=1`);
+}
+
+// ---------------------------------------------------------------------------
+// Cancel booking (spec §9.5)
+// A business event, not a deletion. The slot frees immediately; the advance is
+// forfeited by default and stays as revenue.
+// ---------------------------------------------------------------------------
+const cancelSchema = z.object({
+  bookingId: z.string().min(1),
+  reason: z.string().min(1),
+  advanceHandling: z.enum(["forfeit", "refund_partial", "refund_full"]),
+  refundAmountPaisa: z.number().int().nonnegative().optional(),
+  refundMethod: z.enum(["cash", "bank", "cheque", "easypaisa", "jazzcash"]).optional(),
+});
+
+export type CancelBookingInput = z.infer<typeof cancelSchema>;
+
+export async function cancelBooking(input: CancelBookingInput): Promise<ActionOutcome> {
+  const user = await requireRole("admin");
+  const parsed = cancelSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  const data = parsed.data;
+
+  const booking = await db.query.bookings.findFirst({ where: eq(bookings.id, data.bookingId) });
+  if (!booking || booking.deletedAt) return { error: "Booking not found." };
+  if (booking.status === "cancelled") return { error: "This booking is already cancelled." };
+
+  const refund =
+    data.advanceHandling === "forfeit"
+      ? 0
+      : data.advanceHandling === "refund_full"
+        ? booking.amountPaid
+        : (data.refundAmountPaisa ?? 0);
+
+  if (data.advanceHandling === "refund_partial" && refund <= 0) {
+    return { error: "Enter the amount to refund." };
+  }
+  if (refund > booking.amountPaid) {
+    return { error: "Refund cannot exceed what the client has actually paid." };
+  }
+
+  await db.transaction(async (tx) => {
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // A refund is a negative payment row, so every existing SUM over payments
+    // keeps working without special-casing.
+    if (refund > 0) {
+      await tx.insert(payments).values({
+        id: nanoid(),
+        bookingId: data.bookingId,
+        receiptNo: await nextReceiptNo(tx),
+        amount: -refund,
+        method: data.refundMethod ?? "cash",
+        paidOn: new Date().toISOString().slice(0, 10),
+        notes: "Refund on cancellation",
+        recordedBy: user.id,
+        createdAt: nowSec,
+      });
+    }
+
+    const [{ paid }] = await tx
+      .select({ paid: sql<number>`COALESCE(SUM(${payments.amount}), 0)` })
+      .from(payments)
+      .where(and(eq(payments.bookingId, data.bookingId), isNull(payments.deletedAt)));
+
+    await tx
+      .update(bookings)
+      .set({
+        status: "cancelled",
+        cancelledAt: nowSec,
+        cancelReason: data.reason,
+        advanceHandling: data.advanceHandling === "forfeit" ? "forfeit" : "refund",
+        refundAmount: refund,
+        amountPaid: paid,
+        balanceDue: 0, // nothing further is owed once cancelled
+        updatedAt: nowSec,
+      })
+      .where(eq(bookings.id, data.bookingId));
+
+    await audit(tx, {
+      userId: user.id,
+      action: "cancel",
+      module: "booking",
+      recordId: data.bookingId,
+      summary:
+        refund > 0
+          ? `Cancelled booking ${booking.invoiceNo} — ${data.reason} (refunded)`
+          : `Cancelled booking ${booking.invoiceNo} — ${data.reason} (advance forfeited)`,
+    });
+  });
+
+  revalidatePath("/bookings");
+  revalidatePath(`/bookings/${data.bookingId}`);
+  revalidatePath("/schedule");
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// Delete booking (spec §9.6) — soft, admin only, invoice number never reused.
+// ---------------------------------------------------------------------------
+export async function deleteBooking(
+  bookingId: string,
+  typedInvoiceNo: string,
+): Promise<ActionOutcome> {
+  const user = await requireRole("admin");
+
+  const booking = await db.query.bookings.findFirst({ where: eq(bookings.id, bookingId) });
+  if (!booking || booking.deletedAt) return { error: "Booking not found." };
+
+  // Deliberate friction: deleting a large record by reflex should not be easy.
+  if ((typedInvoiceNo ?? "").trim() !== (booking.invoiceNo ?? "")) {
+    return { error: "The invoice number you typed does not match." };
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(bookings)
+      .set({ deletedAt: Math.floor(Date.now() / 1000) })
+      .where(eq(bookings.id, bookingId));
+
+    await audit(tx, {
+      userId: user.id,
+      action: "delete",
+      module: "booking",
+      recordId: bookingId,
+      summary: `Deleted booking ${booking.invoiceNo} for ${booking.clientName}`,
+    });
+  });
+
+  revalidatePath("/bookings");
+  revalidatePath("/schedule");
+  return {};
 }
 

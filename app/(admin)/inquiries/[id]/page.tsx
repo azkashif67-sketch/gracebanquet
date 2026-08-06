@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth/require-role";
 import { getInquiryDetail } from "@/lib/db/queries/inquiries";
+import { getVenueSettings } from "@/lib/db/queries/settings";
 import { checkAvailability } from "@/lib/db/operations";
 import { db } from "@/lib/db";
 import { inquiries } from "@/lib/db/schema";
@@ -35,12 +36,14 @@ export default async function InquiryDetailPage({
   const { inquiry, notes } = detail;
   const canConvert = user.role === "admin" || user.role === "manager";
 
+  const settings = await getVenueSettings();
+
   let availability: Awaited<ReturnType<typeof checkAvailability>> | null = null;
   if (inquiry.preferredDate && (inquiry.preferredSlot === "day" || inquiry.preferredSlot === "night")) {
     availability = await checkAvailability({
       eventDate: inquiry.preferredDate,
       eventSlot: inquiry.preferredSlot,
-      hallSection: "Full Venue",
+      hallSection: settings.halls[0] ?? "Main Hall",
     });
   }
 

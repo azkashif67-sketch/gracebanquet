@@ -12,7 +12,7 @@ export default async function NewQuotationPage({
 }: {
   searchParams: Promise<{ fromInquiryId?: string }>;
 }) {
-  await requireRole("admin", "manager");
+  await requireRole("admin");
   const params = await searchParams;
 
   const [services, taxesAvailable, settings] = await Promise.all([

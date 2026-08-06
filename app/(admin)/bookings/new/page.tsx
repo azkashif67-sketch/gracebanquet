@@ -38,6 +38,7 @@ export default async function NewBookingPage({
         id: string;
         lines: ServiceLineUI[];
         extras: ExtraLineUI[];
+        hallRentPaisa: number;
         discountAmountPaisa: number;
         taxIds: string[];
       }
@@ -77,6 +78,7 @@ export default async function NewBookingPage({
         id: quotation.id,
         lines: lineUIs,
         extras: extraUIs,
+        hallRentPaisa: quotation.hallRent,
         discountAmountPaisa: quotation.discountAmount,
         taxIds: [], // quotations don't snapshot which tax IDs were used, just the total
       };

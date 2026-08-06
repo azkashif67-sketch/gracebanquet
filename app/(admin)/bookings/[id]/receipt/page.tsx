@@ -2,10 +2,15 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth/require-role";
 import { getBookingDetail } from "@/lib/db/queries/bookings";
 import { getVenueSettings } from "@/lib/db/queries/settings";
-import { formatPKR } from "@/lib/calculations";
+import { amountInWords, formatPKR } from "@/lib/calculations";
 import { PrintButton } from "@/components/print/print-button";
 
-export default async function InvoicePrintPage({
+/**
+ * The CLIENT-facing document. Deliberately shows no tax figures: sales tax is
+ * already inside the hall rent, so the client only needs to know the prices
+ * are tax-inclusive. The internal breakdown lives on /invoice instead.
+ */
+export default async function CustomerReceiptPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -15,7 +20,7 @@ export default async function InvoicePrintPage({
 
   const detail = await getBookingDetail(id);
   if (!detail) notFound();
-  const { booking, serviceLines, extras, taxLines, menu, payments } = detail;
+  const { booking, serviceLines, extras, menu, payments } = detail;
   const venue = await getVenueSettings();
 
   return (
@@ -32,9 +37,8 @@ export default async function InvoicePrintPage({
 
       <div className="mt-6 flex justify-between text-sm">
         <div>
-          <h2 className="font-semibold">INVOICE</h2>
-          <p className="text-xs uppercase tracking-wide">Internal / office copy</p>
-          <p>Invoice #: {booking.invoiceNo}</p>
+          <h2 className="font-semibold">RECEIPT</h2>
+          <p>Ref #: {booking.invoiceNo}</p>
         </div>
         <div className="text-right">
           <p>Date: {new Date(booking.createdAt * 1000).toLocaleDateString("en-PK")}</p>
@@ -108,52 +112,31 @@ export default async function InvoicePrintPage({
           {booking.discountAmount > 0 && (
             <tr>
               <td colSpan={3} className="py-1 text-right">
-                Discount{booking.discountReason ? ` (${booking.discountReason})` : ""}:
+                Discount:
               </td>
               <td className="py-1 text-right">({formatPKR(booking.discountAmount)})</td>
             </tr>
           )}
           <tr className="border-t font-semibold">
             <td colSpan={3} className="py-1 text-right">
-              GRAND TOTAL:
+              TOTAL:
             </td>
             <td className="py-1 text-right">{formatPKR(booking.grandTotal)}</td>
           </tr>
         </tfoot>
       </table>
 
-      {/* Sales tax is charged on the hall rent and is already inside the
-          grand total above — it is never added to what the client pays, and
-          never appears on the client's receipt. This block exists so the
-          office knows what portion must be handed over. */}
-      {booking.taxAmount > 0 && (
-        <div className="mt-4 border border-dashed p-2 text-sm">
-          <p className="mb-1 text-xs font-semibold uppercase">Sales tax (internal — included above)</p>
-          <div className="flex justify-between">
-            <span>Hall rent (tax base)</span>
-            <span>{formatPKR(booking.taxableAmount)}</span>
-          </div>
-          {taxLines.map((t) => (
-            <div key={t.id} className="flex justify-between">
-              <span>
-                {t.taxName} {(t.rate / 100).toFixed(2)}%
-              </span>
-              <span>{formatPKR(t.taxAmount)}</span>
-            </div>
-          ))}
-          <div className="flex justify-between border-t pt-1 font-semibold">
-            <span>Net of tax</span>
-            <span>{formatPKR(booking.grandTotal - booking.taxAmount)}</span>
-          </div>
-        </div>
-      )}
+      <p className="mt-1 text-xs italic">
+        {amountInWords(booking.grandTotal)}
+      </p>
+      <p className="mt-2 text-xs">All prices are inclusive of applicable sales tax.</p>
 
       {payments.length > 0 && (
         <table className="mt-4 w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-t">
               <th className="py-1 text-left" colSpan={4}>
-                PAYMENTS
+                PAYMENTS RECEIVED
               </th>
             </tr>
           </thead>

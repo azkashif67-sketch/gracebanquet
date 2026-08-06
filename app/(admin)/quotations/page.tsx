@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireAuth } from "@/lib/auth/require-role";
+import { requireRole } from "@/lib/auth/require-role";
 import { listQuotations, type QuotationStatus } from "@/lib/db/queries/quotations";
 import { formatPKR } from "@/lib/calculations";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,7 @@ const STATUS_VARIANT: Record<QuotationStatus, "default" | "secondary" | "destruc
 };
 
 export default async function QuotationsPage() {
-  const user = await requireAuth();
+  const user = await requireRole("admin");
   const canCreate = user.role === "admin" || user.role === "manager";
   const rows = await listQuotations();
 

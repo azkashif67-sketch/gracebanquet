@@ -16,12 +16,7 @@ export class ForbiddenError extends Error {
 // Every Server Action and protected page calls this first. There is no other
 // layer of protection (no row-level security beneath the app) — see spec §3.3.
 export async function requireRole(...allowed: Role[]): Promise<SessionUser> {
-  const { session, user } = await validateRequest();
-  if (!session || !user) redirect("/login");
-  if (!user.active) {
-    await invalidateSession(session.id);
-    redirect("/login");
-  }
+  const user = await requireAuth();
   if (!allowed.includes(user.role)) {
     throw new ForbiddenError();
   }
@@ -36,6 +31,11 @@ export async function requireAuth(): Promise<SessionUser> {
   if (!user.active) {
     await invalidateSession(session.id);
     redirect("/login");
+  }
+  // A temporary password must actually be changed — otherwise the redirect
+  // issued at login is bypassed by simply typing any other URL.
+  if (user.mustChangePassword) {
+    redirect("/account/change-password");
   }
   return user;
 }

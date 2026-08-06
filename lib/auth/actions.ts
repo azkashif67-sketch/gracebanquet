@@ -197,7 +197,9 @@ export async function completeSetup(input: SetupInput): Promise<SetupState> {
         email: JSON.stringify(data.email ?? ""),
         ntn: JSON.stringify(data.ntn ?? ""),
         invoice_prefix: JSON.stringify(data.invoicePrefix),
-        halls: JSON.stringify(data.halls.map((h) => h.name).concat(["Full Venue"])),
+        // No synthetic "Full Venue" entry — the venue has a single hall, and
+        // an extra pseudo-hall only creates a confusing second filter option.
+        halls: JSON.stringify(data.halls.map((h) => h.name)),
         slots: JSON.stringify({
           day: { label: "Day", start: data.daySlotStart, end: data.daySlotEnd },
           night: { label: "Night", start: data.nightSlotStart, end: data.nightSlotEnd },
@@ -225,5 +227,73 @@ export async function completeSetup(input: SetupInput): Promise<SetupState> {
   });
 
   await createSession(adminId);
+  redirect("/dashboard");
+}
+
+// ---------------------------------------------------------------------------
+// Change password (spec §15.1, and the forced-change path from §6.1)
+// ---------------------------------------------------------------------------
+const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().optional(),
+    newPassword: z
+      .string()
+      .min(8, "Password must be at least 8 characters.")
+      .regex(/\d/, "Password must include a number."),
+    confirmPassword: z.string(),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"],
+  });
+
+export interface ChangePasswordState {
+  error?: string;
+}
+
+export async function changePassword(
+  _prev: ChangePasswordState,
+  formData: FormData,
+): Promise<ChangePasswordState> {
+  const { user } = await validateRequest();
+  if (!user) redirect("/login");
+
+  const parsed = changePasswordSchema.safeParse({
+    currentPassword: (formData.get("currentPassword") as string) || undefined,
+    newPassword: (formData.get("newPassword") as string) ?? "",
+    confirmPassword: (formData.get("confirmPassword") as string) ?? "",
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const data = parsed.data;
+
+  const row = await db.query.users.findFirst({ where: eq(users.id, user.id) });
+  if (!row) redirect("/login");
+
+  // A user who chose to change their password must prove they know the old
+  // one. A user who is being *forced* to change it (admin reset, first login)
+  // has already proven it by getting this far, and may not know it at all.
+  if (!row.mustChangePassword) {
+    if (!data.currentPassword) return { error: "Enter your current password." };
+    const ok = await verifyPassword(row.passwordHash, data.currentPassword);
+    if (!ok) return { error: "Current password is incorrect." };
+  }
+
+  const passwordHash = await hashPassword(data.newPassword);
+  await db.transaction(async (tx) => {
+    await tx
+      .update(users)
+      .set({ passwordHash, mustChangePassword: 0 })
+      .where(eq(users.id, user.id));
+    await audit(tx, {
+      userId: user.id,
+      action: "update",
+      module: "auth",
+      recordId: user.id,
+      summary: `${row.fullName} changed their password`,
+    });
+  });
+
   redirect("/dashboard");
 }

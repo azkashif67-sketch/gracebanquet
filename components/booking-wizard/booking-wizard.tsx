@@ -27,6 +27,7 @@ import type { AvailabilityResult } from "@/lib/db/operations";
 import {
   checkAvailabilityAction,
   createBooking,
+  updateBooking,
   lookupClientByPhone,
   type BookingInput,
 } from "@/app/(admin)/bookings/actions";
@@ -65,11 +66,43 @@ export interface BookingWizardProps {
     id: string;
     lines: ServiceLineUI[];
     extras: ExtraLineUI[];
+    hallRentPaisa: number;
     discountAmountPaisa: number;
     taxIds: string[];
   };
   /** Set when arriving via "Convert to Booking" from an inquiry. */
   sourceInquiryId?: string;
+  /** Set when editing an existing booking rather than creating one. */
+  editing?: {
+    bookingId: string;
+    invoiceNo: string | null;
+    amountPaidPaisa: number;
+    clientName: string;
+    phone: string;
+    altPhone: string;
+    cnic: string;
+    address: string;
+    eventType: string;
+    eventDate: string;
+    eventSlot: "day" | "night";
+    hallSection: string;
+    guestCount: number;
+    startTime: string;
+    endTime: string;
+    status: "confirmed" | "tentative";
+    holdExpiresOn: string;
+    hallRentPaisa: number;
+    discountAmountPaisa: number;
+    discountReason: string;
+    taxIds: string[];
+    lines: ServiceLineUI[];
+    extras: ExtraLineUI[];
+    menu: { itemName: string; type: string }[];
+    dueDate: string;
+    internalNotes: string;
+    clientNotes: string;
+    specialInstructions: string;
+  };
 }
 
 export function BookingWizard({
@@ -82,6 +115,7 @@ export function BookingWizard({
   prefill,
   fromQuotation,
   sourceInquiryId,
+  editing,
 }: BookingWizardProps) {
   const [step, setStep] = useState(0);
   const [stepError, setStepError] = useState<string | undefined>();
@@ -89,11 +123,11 @@ export function BookingWizard({
   const [submitting, setSubmitting] = useState(false);
 
   // Step 1 — client
-  const [phone, setPhone] = useState(prefill?.phone ?? "");
-  const [clientName, setClientName] = useState(prefill?.clientName ?? "");
-  const [altPhone, setAltPhone] = useState("");
-  const [cnic, setCnic] = useState("");
-  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState(editing?.phone ?? prefill?.phone ?? "");
+  const [clientName, setClientName] = useState(editing?.clientName ?? prefill?.clientName ?? "");
+  const [altPhone, setAltPhone] = useState(editing?.altPhone ?? "");
+  const [cnic, setCnic] = useState(editing?.cnic ?? "");
+  const [address, setAddress] = useState(editing?.address ?? "");
   const [clientMatch, setClientMatch] = useState<{
     clientName: string;
     cnic: string | null;
@@ -103,46 +137,74 @@ export function BookingWizard({
   } | null>(null);
 
   // Step 1 — event
-  const [eventType, setEventType] = useState(prefill?.eventType ?? settings.eventTypes[0] ?? "wedding");
-  const [eventDate, setEventDate] = useState(prefill?.eventDate ?? "");
-  const [eventSlot, setEventSlot] = useState<"day" | "night">(prefill?.eventSlot ?? "night");
-  const [hallSection, setHallSection] = useState(prefill?.hallSection ?? settings.halls[0] ?? "");
-  const [guestCount, setGuestCount] = useState(prefill?.guestCount ? String(prefill.guestCount) : "");
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
-  const [status, setStatus] = useState<"confirmed" | "tentative">("confirmed");
+  const [eventType, setEventType] = useState(
+    editing?.eventType ?? prefill?.eventType ?? settings.eventTypes[0] ?? "wedding",
+  );
+  const [eventDate, setEventDate] = useState(editing?.eventDate ?? prefill?.eventDate ?? "");
+  const [eventSlot, setEventSlot] = useState<"day" | "night">(
+    editing?.eventSlot ?? prefill?.eventSlot ?? "night",
+  );
+  const [hallSection, setHallSection] = useState(
+    editing?.hallSection ?? prefill?.hallSection ?? settings.halls[0] ?? "",
+  );
+  const [guestCount, setGuestCount] = useState(
+    editing ? String(editing.guestCount) : prefill?.guestCount ? String(prefill.guestCount) : "",
+  );
+  const [startTime, setStartTime] = useState(editing?.startTime ?? "");
+  const [endTime, setEndTime] = useState(editing?.endTime ?? "");
+  const [status, setStatus] = useState<"confirmed" | "tentative">(editing?.status ?? "confirmed");
   const [holdExpiresOn, setHoldExpiresOn] = useState(
-    format(addDays(new Date(), settings.holdDefaultDays), "yyyy-MM-dd"),
+    editing?.holdExpiresOn || format(addDays(new Date(), settings.holdDefaultDays), "yyyy-MM-dd"),
   );
   const [availability, setAvailability] = useState<AvailabilityResult | null>(null);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
 
   // Step 2 — services / menu
-  const [lines, setLines] = useState<ServiceLineUI[]>(fromQuotation?.lines ?? []);
+  const [lines, setLines] = useState<ServiceLineUI[]>(editing?.lines ?? fromQuotation?.lines ?? []);
   const [menus, setMenus] = useState<Record<string, MenuLineUI[]>>(() => {
-    if (!fromQuotation) return {};
+    const source = editing ?? fromQuotation;
+    if (!source) return {};
     const initial: Record<string, MenuLineUI[]> = {};
-    for (const line of fromQuotation.lines) {
+    // When editing, the saved menu is the source of truth: tick exactly what
+    // was agreed, not the service's full default dish list.
+    const savedNames = editing ? new Set(editing.menu.map((m) => m.itemName)) : null;
+    for (const line of source.lines) {
       if (line.category === "catering" && cateringMenus[line.serviceId]) {
-        initial[line.serviceId] = cateringMenus[line.serviceId].map((m) => ({
+        const defaults = cateringMenus[line.serviceId].map((m) => ({
           itemName: m.name,
           type: m.type,
-          checked: true,
+          checked: savedNames ? savedNames.has(m.name) : true,
         }));
+        // Custom dishes typed on the original booking aren't in the catalogue.
+        const extraSaved = editing
+          ? editing.menu
+              .filter((m) => !cateringMenus[line.serviceId].some((d) => d.name === m.itemName))
+              .map((m) => ({ itemName: m.itemName, type: m.type, checked: true }))
+          : [];
+        initial[line.serviceId] = [...defaults, ...extraSaved];
       }
     }
     return initial;
   });
 
   // Step 3 — extras & charges
-  const [extras, setExtras] = useState<ExtraLineUI[]>(fromQuotation?.extras ?? []);
-  const [discountRupees, setDiscountRupees] = useState(
-    fromQuotation ? String(toRupees(fromQuotation.discountAmountPaisa)) : "0",
+  const [hallRentRupees, setHallRentRupees] = useState(() => {
+    const source = editing ?? fromQuotation;
+    return source ? String(toRupees(source.hallRentPaisa)) : "";
+  });
+  const [extras, setExtras] = useState<ExtraLineUI[]>(
+    editing?.extras ?? fromQuotation?.extras ?? [],
   );
-  const [discountReason, setDiscountReason] = useState("");
+  const [discountRupees, setDiscountRupees] = useState(() => {
+    const source = editing ?? fromQuotation;
+    return source ? String(toRupees(source.discountAmountPaisa)) : "0";
+  });
+  const [discountReason, setDiscountReason] = useState(editing?.discountReason ?? "");
   const [selectedTaxIds, setSelectedTaxIds] = useState<string[]>(
-    fromQuotation?.taxIds ?? taxesAvailable.filter((t) => t.isDefault === 1).map((t) => t.id),
+    editing?.taxIds ??
+      fromQuotation?.taxIds ??
+      taxesAvailable.filter((t) => t.isDefault === 1).map((t) => t.id),
   );
 
   // Step 4 — payment & notes
@@ -152,13 +214,15 @@ export function BookingWizard({
   >("cash");
   const [paymentDate, setPaymentDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [paymentReference, setPaymentReference] = useState("");
-  const [dueDate, setDueDate] = useState("");
+  const [dueDate, setDueDate] = useState(editing?.dueDate ?? "");
   const [usePaymentPlan, setUsePaymentPlan] = useState(false);
   const [installmentRows, setInstallmentRows] = useState<InstallmentRowUI[]>([]);
   const [splitCount, setSplitCount] = useState("3");
-  const [internalNotes, setInternalNotes] = useState("");
-  const [clientNotes, setClientNotes] = useState("");
-  const [specialInstructions, setSpecialInstructions] = useState("");
+  const [internalNotes, setInternalNotes] = useState(editing?.internalNotes ?? "");
+  const [clientNotes, setClientNotes] = useState(editing?.clientNotes ?? "");
+  const [specialInstructions, setSpecialInstructions] = useState(
+    editing?.specialInstructions ?? "",
+  );
 
   // Auto-fill due date from event date + offset, once, when the user first
   // reaches step 4 without having set one.
@@ -190,7 +254,13 @@ export function BookingWizard({
     }
     setCheckingAvailability(true);
     const handle = setTimeout(async () => {
-      const result = await checkAvailabilityAction({ eventDate, eventSlot, hallSection });
+      const result = await checkAvailabilityAction({
+        eventDate,
+        eventSlot,
+        hallSection,
+        // When editing, a booking must not be reported as conflicting with itself.
+        excludeBookingId: editing?.bookingId,
+      });
       setAvailability(result);
       setCheckingAvailability(false);
     }, 300);
@@ -198,7 +268,7 @@ export function BookingWizard({
       clearTimeout(handle);
       setCheckingAvailability(false);
     };
-  }, [eventDate, eventSlot, hallSection]);
+  }, [eventDate, eventSlot, hallSection, editing?.bookingId]);
 
   function applyAutofill() {
     if (!clientMatch) return;
@@ -249,18 +319,20 @@ export function BookingWizard({
     setLines((prev) => prev.map((l) => (l.serviceId === serviceId ? { ...l, ...patch } : l)));
   }
 
+  const hallRentPaisa = toPaisa(Number(hallRentRupees) || 0);
+
   const totals = useMemo(
     () =>
       calculateTotals({
-        serviceLines: lines.map((l) => ({ qty: l.qty, rate: l.ratePaisa, taxable: l.taxable })),
-        extraLines: extras.map((e) => ({ qty: e.qty, rate: e.ratePaisa, taxable: e.taxable })),
+        hallRent: hallRentPaisa,
+        serviceLines: lines.map((l) => ({ qty: l.qty, rate: l.ratePaisa })),
+        extraLines: extras.map((e) => ({ qty: e.qty, rate: e.ratePaisa })),
         discountAmount: toPaisa(Number(discountRupees) || 0),
         taxes: taxesAvailable
           .filter((t) => selectedTaxIds.includes(t.id))
           .map((t) => ({ id: t.id, name: t.name, rateBps: t.rate })),
-        taxOnDiscounted: settings.taxOnDiscounted,
       }),
-    [lines, extras, discountRupees, selectedTaxIds, taxesAvailable, settings.taxOnDiscounted],
+    [hallRentPaisa, lines, extras, discountRupees, selectedTaxIds, taxesAvailable],
   );
 
   const advancePaisa = toPaisa(Number(advanceRupees) || 0);
@@ -303,6 +375,9 @@ export function BookingWizard({
       }
     }
     if (step === 2) {
+      if (hallRentRupees.trim() === "" || Number(hallRentRupees) < 0) {
+        return "Hall rent is required (enter 0 if the hall is not being charged).";
+      }
       if (Number(discountRupees) > 0 && !discountReason.trim()) {
         return "Discount reason is required when a discount is applied.";
       }
@@ -384,6 +459,7 @@ export function BookingWizard({
         ratePaisa: e.ratePaisa,
         taxable: e.taxable,
       })),
+      hallRentPaisa,
       discountAmountPaisa: toPaisa(Number(discountRupees) || 0),
       discountReason: discountReason || undefined,
       taxIds: selectedTaxIds,
@@ -404,17 +480,15 @@ export function BookingWizard({
       specialInstructions: specialInstructions || undefined,
     };
 
-    try {
-      const result = await createBooking(input);
-      if (result?.error) {
-        setSubmitError(result.error);
-        setSubmitting(false);
-      }
-      // On success createBooking() redirects, which throws NEXT_REDIRECT and
-      // never returns here.
-    } catch (e) {
-      throw e;
+    const result = editing
+      ? await updateBooking(editing.bookingId, input)
+      : await createBooking(input);
+    if (result?.error) {
+      setSubmitError(result.error);
+      setSubmitting(false);
     }
+    // On success both actions redirect, which throws NEXT_REDIRECT and never
+    // returns here.
   }
 
   const categories = useMemo(() => {
@@ -510,20 +584,24 @@ export function BookingWizard({
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Hall / section">
-                <Select value={hallSection} onValueChange={(v) => setHallSection(v ?? "")}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {settings.halls.map((h) => (
-                      <SelectItem key={h} value={h}>
-                        {h}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
+              {/* With a single hall there is nothing to choose — it's already
+                  selected by default, so showing a one-option dropdown is noise. */}
+              {settings.halls.length > 1 && (
+                <Field label="Hall / section">
+                  <Select value={hallSection} onValueChange={(v) => setHallSection(v ?? "")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {settings.halls.map((h) => (
+                        <SelectItem key={h} value={h}>
+                          {h}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
               <Field label="Status">
                 <Select value={status} onValueChange={(v) => setStatus(v as "confirmed" | "tentative")}>
                   <SelectTrigger>
@@ -685,6 +763,42 @@ export function BookingWizard({
 
         {step === 2 && (
           <div className="flex flex-col gap-4">
+            <h2 className="font-semibold">Hall Rent</h2>
+            <div className="flex flex-col gap-2 rounded-md border p-3">
+              <Field label="Hall rent (Rs)">
+                <Input
+                  type="number"
+                  min={0}
+                  className="w-40"
+                  value={hallRentRupees}
+                  onChange={(e) => setHallRentRupees(e.target.value)}
+                />
+              </Field>
+              <p className="text-xs text-muted-foreground">
+                Quoted inclusive of sales tax. This is the only amount tax is charged on —
+                catering, decor and other services are not taxed.
+              </p>
+              {totals.taxAmount > 0 && (
+                <div className="rounded-md bg-muted/50 p-2 text-sm">
+                  <p className="mb-1 text-xs font-medium uppercase text-muted-foreground">
+                    Internal — not shown to the client
+                  </p>
+                  {totals.taxLines.map((t) => (
+                    <div key={t.id} className="flex justify-between">
+                      <span className="text-muted-foreground">
+                        {t.name} {(t.rateBps / 100).toFixed(2)}% (included)
+                      </span>
+                      <span>{formatPKR(t.amount)}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-medium">
+                    <span>Rent net of tax</span>
+                    <span>{formatPKR(hallRentPaisa - totals.taxAmount)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <h2 className="font-semibold">Extras</h2>
             <Table>
               <TableHeader>
@@ -693,7 +807,6 @@ export function BookingWizard({
                   <TableHead>Qty</TableHead>
                   <TableHead>Rate</TableHead>
                   <TableHead>Total</TableHead>
-                  <TableHead>Taxable</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
@@ -741,16 +854,6 @@ export function BookingWizard({
                     </TableCell>
                     <TableCell>{formatPKR(e.qty * e.ratePaisa)}</TableCell>
                     <TableCell>
-                      <Checkbox
-                        checked={e.taxable}
-                        onCheckedChange={(v) =>
-                          setExtras((prev) =>
-                            prev.map((x, idx) => (idx === i ? { ...x, taxable: v === true } : x)),
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -795,7 +898,7 @@ export function BookingWizard({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label>Taxes applied</Label>
+              <Label>Taxes applied (on hall rent)</Label>
               {taxesAvailable.map((t) => (
                 <label key={t.id} className="flex items-center gap-2 text-sm">
                   <Checkbox
@@ -810,44 +913,97 @@ export function BookingWizard({
                 </label>
               ))}
             </div>
+
+            <div className="flex flex-col gap-1 rounded-md border p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Hall rent</span>
+                <span>{formatPKR(hallRentPaisa)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Services &amp; extras</span>
+                <span>{formatPKR(totals.subtotal - hallRentPaisa)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span>{formatPKR(totals.subtotal)}</span>
+              </div>
+              {totals.discount > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Discount</span>
+                  <span>({formatPKR(totals.discount)})</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t pt-1 font-semibold">
+                <span>Grand total (client pays)</span>
+                <span>{formatPKR(totals.grandTotal)}</span>
+              </div>
+              {totals.taxAmount > 0 && (
+                <div className="mt-1 flex justify-between border-t pt-1 text-xs text-muted-foreground">
+                  <span>of which sales tax (included, internal)</span>
+                  <span>{formatPKR(totals.taxAmount)}</span>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {step === 3 && (
           <div className="flex flex-col gap-4">
             <h2 className="font-semibold">Payment</h2>
+            {editing && (
+              <p className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                Payments already recorded are not changed by an edit. To take another payment or
+                issue a refund, use Record Payment on the booking page.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Advance amount (Rs)">
-                <Input
-                  type="number"
-                  min={0}
-                  value={advanceRupees}
-                  onChange={(e) => setAdvanceRupees(e.target.value)}
-                />
-              </Field>
-              <Field label="Payment method">
-                <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as typeof paymentMethod)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="bank">Bank</SelectItem>
-                    <SelectItem value="cheque">Cheque</SelectItem>
-                    <SelectItem value="easypaisa">Easypaisa</SelectItem>
-                    <SelectItem value="jazzcash">JazzCash</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Payment date">
-                <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
-              </Field>
-              <Field label="Reference / cheque no">
-                <Input value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} />
-              </Field>
-              <Field label="Balance due">
-                <Input value={formatPKR(balance)} disabled />
-              </Field>
+              {!editing && (
+                <Field label="Advance amount (Rs)">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={advanceRupees}
+                    onChange={(e) => setAdvanceRupees(e.target.value)}
+                  />
+                </Field>
+              )}
+              {!editing && (
+                <>
+                  <Field label="Payment method">
+                    <Select
+                      value={paymentMethod}
+                      onValueChange={(v) => setPaymentMethod(v as typeof paymentMethod)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="bank">Bank</SelectItem>
+                        <SelectItem value="cheque">Cheque</SelectItem>
+                        <SelectItem value="easypaisa">Easypaisa</SelectItem>
+                        <SelectItem value="jazzcash">JazzCash</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Payment date">
+                    <Input
+                      type="date"
+                      value={paymentDate}
+                      onChange={(e) => setPaymentDate(e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Reference / cheque no">
+                    <Input
+                      value={paymentReference}
+                      onChange={(e) => setPaymentReference(e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Balance due">
+                    <Input value={formatPKR(balance)} disabled />
+                  </Field>
+                </>
+              )}
               {!usePaymentPlan && (
                 <Field label="Due date">
                   <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
@@ -855,10 +1011,15 @@ export function BookingWizard({
               )}
             </div>
 
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={usePaymentPlan} onCheckedChange={(v) => setUsePaymentPlan(v === true)} />
-              Use a payment plan instead of a single due date
-            </label>
+            {!editing && (
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={usePaymentPlan}
+                  onCheckedChange={(v) => setUsePaymentPlan(v === true)}
+                />
+                Use a payment plan instead of a single due date
+              </label>
+            )}
 
             {usePaymentPlan && (
               <div className="flex flex-col gap-3 rounded-md border p-3">
@@ -973,7 +1134,7 @@ export function BookingWizard({
             </Button>
           ) : (
             <Button type="button" onClick={submit} disabled={submitting}>
-              {submitting ? "Saving…" : "Create booking"}
+              {submitting ? "Saving…" : editing ? "Save changes" : "Create booking"}
             </Button>
           )}
         </div>
@@ -984,11 +1145,13 @@ export function BookingWizard({
         eventDate={eventDate}
         eventSlot={eventSlot}
         guestCount={Number(guestCount) || 0}
+        hallRent={hallRentPaisa}
         subtotal={totals.subtotal}
         discount={totals.discount}
         taxAmount={totals.taxAmount}
         grandTotal={totals.grandTotal}
         advancePaisa={advancePaisa}
+        alreadyPaidPaisa={editing?.amountPaidPaisa}
       />
     </div>
   );

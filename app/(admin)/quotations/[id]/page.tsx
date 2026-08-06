@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireAuth } from "@/lib/auth/require-role";
+import { requireRole } from "@/lib/auth/require-role";
 import { getQuotationDetail } from "@/lib/db/queries/quotations";
 import { formatPKR } from "@/lib/calculations";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +21,7 @@ export default async function QuotationDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const user = await requireAuth();
+  const user = await requireRole("admin");
   const canManage = user.role === "admin" || user.role === "manager";
   const { id } = await params;
 

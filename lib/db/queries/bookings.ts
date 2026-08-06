@@ -52,6 +52,7 @@ export async function listBookings() {
       amountPaid: bookings.amountPaid,
       balanceDue: bookings.balanceDue,
       status: bookings.status,
+      createdBy: bookings.createdBy,
     })
     .from(bookings)
     .where(isNull(bookings.deletedAt))

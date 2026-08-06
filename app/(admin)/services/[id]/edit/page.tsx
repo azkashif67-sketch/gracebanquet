@@ -9,7 +9,7 @@ export default async function EditServicePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireRole("admin", "manager");
+  await requireRole("admin");
   const { id } = await params;
 
   const result = await getServiceWithMenu(id);

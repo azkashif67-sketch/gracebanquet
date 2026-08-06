@@ -98,6 +98,9 @@ export const bookings = sqliteTable(
     startTime: text("start_time"),
     endTime: text("end_time"),
 
+    // The venue rental charge. This is the sole base for sales tax, which is
+    // quoted inclusive — see calculateTotals() in lib/calculations.ts.
+    hallRent: integer("hall_rent").notNull().default(0),
     subtotal: integer("subtotal").notNull().default(0),
     discountAmount: integer("discount_amount").notNull().default(0),
     discountReason: text("discount_reason"),
@@ -363,6 +366,7 @@ export const quotations = sqliteTable(
     eventSlotPref: text("event_slot_pref"),
     hallPref: text("hall_pref"),
     guestCount: integer("guest_count"),
+    hallRent: integer("hall_rent").notNull().default(0),
     subtotal: integer("subtotal").notNull().default(0),
     discountAmount: integer("discount_amount").notNull().default(0),
     taxAmount: integer("tax_amount").notNull().default(0),

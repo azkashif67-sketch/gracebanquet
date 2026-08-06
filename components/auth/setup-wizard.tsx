@@ -261,7 +261,8 @@ export function SetupWizard() {
                 Add hall
               </Button>
               <p className="text-xs text-muted-foreground">
-                A &ldquo;Full Venue&rdquo; option is added automatically and blocks/is blocked by every section.
+                Most venues need only one. Each hall is booked independently — two halls means two
+                separate day and night slots per date.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-4">

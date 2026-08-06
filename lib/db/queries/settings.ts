@@ -19,7 +19,6 @@ export interface VenueSettings {
   dueDateOffsetDays: number;
   holdDefaultDays: number;
   quoteValidityDays: number;
-  taxOnDiscounted: boolean;
 }
 
 const DEFAULTS: VenueSettings = {
@@ -28,7 +27,7 @@ const DEFAULTS: VenueSettings = {
   phone: "",
   ntn: "",
   invoicePrefix: "INV",
-  halls: ["Main Hall", "Full Venue"],
+  halls: ["Main Hall"],
   slots: {
     day: { label: "Day", start: "12:00", end: "17:00" },
     night: { label: "Night", start: "19:00", end: "00:00" },
@@ -48,7 +47,6 @@ const DEFAULTS: VenueSettings = {
   dueDateOffsetDays: 2,
   holdDefaultDays: 7,
   quoteValidityDays: 14,
-  taxOnDiscounted: true,
 };
 
 export async function getVenueSettings(): Promise<VenueSettings> {
@@ -77,6 +75,5 @@ export async function getVenueSettings(): Promise<VenueSettings> {
     dueDateOffsetDays: parse("due_date_offset_days", DEFAULTS.dueDateOffsetDays),
     holdDefaultDays: parse("hold_default_days", DEFAULTS.holdDefaultDays),
     quoteValidityDays: parse("quote_validity_days", DEFAULTS.quoteValidityDays),
-    taxOnDiscounted: parse("tax_on_discounted", DEFAULTS.taxOnDiscounted),
   };
 }
