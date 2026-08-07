@@ -56,6 +56,12 @@ export const services = sqliteTable(
     rate: integer("rate").notNull(), // paisa
     taxable: integer("taxable").notNull().default(1),
     active: integer("active").notNull().default(1),
+    // A system service exists to configure the venue itself rather than to be
+    // picked per booking — currently only Hall Rent, which supplies the default
+    // rate for the pinned first line of every booking. Never offered in the
+    // service picker (it would double-count against bookings.hall_rent) and
+    // cannot be deleted or deactivated.
+    isSystem: integer("is_system").notNull().default(0),
     deletedAt: integer("deleted_at"),
     createdAt: integer("created_at").notNull(),
   },

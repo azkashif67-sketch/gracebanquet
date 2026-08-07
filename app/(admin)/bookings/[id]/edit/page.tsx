@@ -1,7 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth/require-role";
 import { canApplyDiscount, canOverrideAvailability } from "@/lib/auth/permissions";
-import { listActiveServices, getCateringMenuByService } from "@/lib/db/queries/services";
+import {
+  listActiveServices,
+  getCateringMenuByService,
+  getHallRentService,
+} from "@/lib/db/queries/services";
 import { listActiveTaxes } from "@/lib/db/queries/taxes";
 import { getVenueSettings } from "@/lib/db/queries/settings";
 import { getBookingDetail } from "@/lib/db/queries/bookings";
@@ -16,13 +20,15 @@ export default async function EditBookingPage({
   const user = await requireRole("admin", "manager");
   const { id } = await params;
 
-  const [detail, services, cateringMenus, taxesAvailable, settings] = await Promise.all([
-    getBookingDetail(id),
-    listActiveServices(),
-    getCateringMenuByService(),
-    listActiveTaxes(),
-    getVenueSettings(),
-  ]);
+  const [detail, services, hallRentService, cateringMenus, taxesAvailable, settings] =
+    await Promise.all([
+      getBookingDetail(id),
+      listActiveServices(),
+      getHallRentService(),
+      getCateringMenuByService(),
+      listActiveTaxes(),
+      getVenueSettings(),
+    ]);
 
   if (!detail || detail.booking.deletedAt) notFound();
   const { booking, serviceLines, extras, menu, taxLines } = detail;
@@ -65,6 +71,7 @@ export default async function EditBookingPage({
         settings={settings}
         canApplyDiscount={canApplyDiscount(user.role)}
         canOverride={canOverrideAvailability(user.role)}
+        hallRentService={hallRentService}
         editing={{
           bookingId: booking.id,
           invoiceNo: booking.invoiceNo,

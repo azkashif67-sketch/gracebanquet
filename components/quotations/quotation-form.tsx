@@ -40,6 +40,8 @@ export interface QuotationFormProps {
   services: AvailableService[];
   taxesAvailable: AvailableTax[];
   settings: VenueSettings;
+  /** Hall Rent catalogue entry — label and default rate for the pinned line. */
+  hallRentService?: { name: string; rate: number } | null;
   sourceInquiryId?: string;
   initial?: {
     clientName?: string;
@@ -52,7 +54,15 @@ export interface QuotationFormProps {
   };
 }
 
-export function QuotationForm({ services, taxesAvailable, settings, sourceInquiryId, initial }: QuotationFormProps) {
+export function QuotationForm({
+  services,
+  taxesAvailable,
+  settings,
+  hallRentService,
+  sourceInquiryId,
+  initial,
+}: QuotationFormProps) {
+  const hallRentServiceName = hallRentService?.name ?? "Hall Rent";
   const [clientName, setClientName] = useState(initial?.clientName ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
@@ -62,7 +72,9 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
   const [hallPref, setHallPref] = useState(settings.halls[0] ?? "");
   const [guestCount, setGuestCount] = useState(initial?.guestCount ? String(initial.guestCount) : "");
   const [lines, setLines] = useState<LineUI[]>([]);
-  const [hallRentRupees, setHallRentRupees] = useState("");
+  const [hallRentRupees, setHallRentRupees] = useState(
+    hallRentService ? String(toRupees(hallRentService.rate)) : "",
+  );
   const [discountRupees, setDiscountRupees] = useState("0");
   const [selectedTaxIds, setSelectedTaxIds] = useState<string[]>(
     taxesAvailable.filter((t) => t.isDefault === 1).map((t) => t.id),
@@ -245,6 +257,27 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
             </TableRow>
           </TableHeader>
           <TableBody>
+            {/* Pinned first line, mirroring the booking wizard. Hall rent is
+                its own column (quotations.hall_rent) and the sole tax base —
+                it must not join `lines` or it would be counted twice. */}
+            <TableRow>
+              <TableCell className="font-medium">
+                {hallRentServiceName}
+                <div className="text-xs text-muted-foreground">Charged on every booking</div>
+              </TableCell>
+              <TableCell>1</TableCell>
+              <TableCell>
+                <Input
+                  type="number"
+                  min={0}
+                  className="w-28"
+                  value={hallRentRupees}
+                  onChange={(e) => setHallRentRupees(e.target.value)}
+                />
+              </TableCell>
+              <TableCell>{formatPKR(hallRentPaisa)}</TableCell>
+              <TableCell />
+            </TableRow>
             {lines.map((l, i) => (
               <TableRow key={i}>
                 <TableCell>
@@ -307,14 +340,6 @@ export function QuotationForm({ services, taxesAvailable, settings, sourceInquir
         </Button>
 
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Hall rent (Rs)">
-            <Input
-              type="number"
-              min={0}
-              value={hallRentRupees}
-              onChange={(e) => setHallRentRupees(e.target.value)}
-            />
-          </Field>
           <Field label="Discount (Rs)">
             <Input type="number" value={discountRupees} onChange={(e) => setDiscountRupees(e.target.value)} />
           </Field>

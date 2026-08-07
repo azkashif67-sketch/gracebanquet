@@ -1,6 +1,10 @@
 import { requireRole } from "@/lib/auth/require-role";
 import { canApplyDiscount, canOverrideAvailability } from "@/lib/auth/permissions";
-import { listActiveServices, getCateringMenuByService } from "@/lib/db/queries/services";
+import {
+  listActiveServices,
+  getCateringMenuByService,
+  getHallRentService,
+} from "@/lib/db/queries/services";
 import { listActiveTaxes } from "@/lib/db/queries/taxes";
 import { getVenueSettings } from "@/lib/db/queries/settings";
 import { getQuotationDetail } from "@/lib/db/queries/quotations";
@@ -26,12 +30,14 @@ export default async function NewBookingPage({
   const user = await requireRole("admin", "manager", "staff");
   const params = await searchParams;
 
-  const [services, cateringMenus, taxesAvailable, settings] = await Promise.all([
-    listActiveServices(),
-    getCateringMenuByService(),
-    listActiveTaxes(),
-    getVenueSettings(),
-  ]);
+  const [services, hallRentService, cateringMenus, taxesAvailable, settings] =
+    await Promise.all([
+      listActiveServices(),
+      getHallRentService(),
+      getCateringMenuByService(),
+      listActiveTaxes(),
+      getVenueSettings(),
+    ]);
 
   let fromQuotation:
     | {
@@ -117,6 +123,7 @@ export default async function NewBookingPage({
         settings={settings}
         canApplyDiscount={canApplyDiscount(user.role)}
         canOverride={canOverrideAvailability(user.role)}
+        hallRentService={hallRentService}
         prefill={{
           eventDate: params.date ?? sourcePrefill.eventDate,
           eventSlot:

@@ -11,6 +11,7 @@ import { requireRole } from "@/lib/auth/require-role";
 import { audit, diff } from "@/lib/audit";
 
 const CATEGORIES = [
+  "venue",
   "sound",
   "lighting",
   "entry",
@@ -185,6 +186,14 @@ export async function deleteOrDeactivateService(
 
   const before = await db.query.services.findFirst({ where: eq(services.id, id) });
   if (!before) return { error: "Service not found." };
+
+  // Hall Rent is what every booking's first line is priced from — removing it
+  // would leave new bookings with no default and nothing to tax.
+  if (before.isSystem === 1) {
+    return {
+      error: `"${before.name}" is part of how the venue is set up and can't be removed. Edit its rate instead.`,
+    };
+  }
 
   const usage = await db
     .select({ n: count() })

@@ -41,7 +41,14 @@ export default async function ServicesPage() {
         <TableBody>
           {rows.map((svc) => (
             <TableRow key={svc.id}>
-              <TableCell>{svc.name}</TableCell>
+              <TableCell>
+                {svc.name}
+                {svc.isSystem === 1 && (
+                  <div className="text-xs text-muted-foreground">
+                    Charged on every booking — this rate is the default.
+                  </div>
+                )}
+              </TableCell>
               <TableCell className="capitalize">{svc.category}</TableCell>
               <TableCell className="capitalize">{svc.pricingType.replace("_", " ")}</TableCell>
               <TableCell>{formatPKR(svc.rate)}</TableCell>
@@ -57,7 +64,8 @@ export default async function ServicesPage() {
                     size="sm"
                     render={<Link href={`/services/${svc.id}/edit`}>Edit</Link>}
                   />
-                  <DeleteServiceButton id={svc.id} name={svc.name} />
+                  {/* Hall Rent can't be removed — see deleteOrDeactivateService. */}
+                  {svc.isSystem !== 1 && <DeleteServiceButton id={svc.id} name={svc.name} />}
                 </TableCell>
               )}
             </TableRow>

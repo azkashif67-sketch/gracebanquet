@@ -1,5 +1,5 @@
 import { requireRole } from "@/lib/auth/require-role";
-import { listActiveServices } from "@/lib/db/queries/services";
+import { listActiveServices, getHallRentService } from "@/lib/db/queries/services";
 import { listActiveTaxes } from "@/lib/db/queries/taxes";
 import { getVenueSettings } from "@/lib/db/queries/settings";
 import { db } from "@/lib/db";
@@ -15,8 +15,9 @@ export default async function NewQuotationPage({
   await requireRole("admin");
   const params = await searchParams;
 
-  const [services, taxesAvailable, settings] = await Promise.all([
+  const [services, hallRentService, taxesAvailable, settings] = await Promise.all([
     listActiveServices(),
+    getHallRentService(),
     listActiveTaxes(),
     getVenueSettings(),
   ]);
@@ -46,6 +47,7 @@ export default async function NewQuotationPage({
         services={services}
         taxesAvailable={taxesAvailable}
         settings={settings}
+        hallRentService={hallRentService}
         sourceInquiryId={sourceInquiryId}
         initial={initial}
       />

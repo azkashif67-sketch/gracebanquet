@@ -16,7 +16,10 @@ import {
 import { createService, updateService, type ServiceInput } from "@/app/(admin)/services/actions";
 import { Field } from "@/components/form-field";
 
+// Must stay in step with CATEGORIES in app/(admin)/services/actions.ts, which
+// is what the Zod schema validates against.
 const CATEGORIES = [
+  "venue",
   "sound",
   "lighting",
   "entry",

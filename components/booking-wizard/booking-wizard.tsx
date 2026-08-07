@@ -52,6 +52,9 @@ export interface BookingWizardProps {
   settings: VenueSettings;
   canApplyDiscount: boolean;
   canOverride: boolean;
+  /** The Hall Rent catalogue entry — supplies the label and default rate for
+   *  the pinned first service line. Null if it's missing from the catalogue. */
+  hallRentService?: { name: string; rate: number } | null;
   prefill?: {
     eventDate?: string;
     eventSlot?: "day" | "night";
@@ -112,11 +115,13 @@ export function BookingWizard({
   settings,
   canApplyDiscount,
   canOverride,
+  hallRentService,
   prefill,
   fromQuotation,
   sourceInquiryId,
   editing,
 }: BookingWizardProps) {
+  const hallRentServiceName = hallRentService?.name ?? "Hall Rent";
   const [step, setStep] = useState(0);
   const [stepError, setStepError] = useState<string | undefined>();
   const [submitError, setSubmitError] = useState<string | undefined>();
@@ -190,8 +195,11 @@ export function BookingWizard({
 
   // Step 3 — extras & charges
   const [hallRentRupees, setHallRentRupees] = useState(() => {
+    // An existing booking or a converted quotation carries its own agreed rent;
+    // a brand-new booking starts from the catalogue's standard rate.
     const source = editing ?? fromQuotation;
-    return source ? String(toRupees(source.hallRentPaisa)) : "";
+    if (source) return String(toRupees(source.hallRentPaisa));
+    return hallRentService ? String(toRupees(hallRentService.rate)) : "";
   });
   const [extras, setExtras] = useState<ExtraLineUI[]>(
     editing?.extras ?? fromQuotation?.extras ?? [],
@@ -374,10 +382,12 @@ export function BookingWizard({
         return "This date/slot/hall is already booked. An admin override reason is required to continue.";
       }
     }
-    if (step === 2) {
+    if (step === 1) {
       if (hallRentRupees.trim() === "" || Number(hallRentRupees) < 0) {
         return "Hall rent is required (enter 0 if the hall is not being charged).";
       }
+    }
+    if (step === 2) {
       if (Number(discountRupees) > 0 && !discountReason.trim()) {
         return "Discount reason is required when a discount is applied.";
       }
@@ -694,6 +704,30 @@ export function BookingWizard({
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {/* Hall rent is the venue's core fixed service and the first
+                    line of every booking, so it is pinned here and cannot be
+                    removed. It is NOT part of `lines` — it lives in its own
+                    bookings.hall_rent column, which is also the sales-tax base;
+                    putting it in `lines` would double it in the subtotal and
+                    print it twice on the invoice. */}
+                <TableRow>
+                  <TableCell className="font-medium">
+                    {hallRentServiceName}
+                    <div className="text-xs text-muted-foreground">{hallSection}</div>
+                  </TableCell>
+                  <TableCell>1</TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      min={0}
+                      className="w-28"
+                      value={hallRentRupees}
+                      onChange={(e) => setHallRentRupees(e.target.value)}
+                    />
+                  </TableCell>
+                  <TableCell>{formatPKR(hallRentPaisa)}</TableCell>
+                  <TableCell />
+                </TableRow>
                 {lines.map((l) => (
                   <TableRow key={l.serviceId}>
                     <TableCell>{l.serviceName}</TableCell>
@@ -726,12 +760,21 @@ export function BookingWizard({
                 {lines.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center text-muted-foreground">
-                      No services added yet.
+                      No additional services yet.
                     </TableCell>
                   </TableRow>
                 )}
               </TableBody>
             </Table>
+
+            <p className="text-xs text-muted-foreground">
+              Hall rent is quoted inclusive of sales tax and is the only amount taxed — catering,
+              decor and other services are not.
+              {totals.taxAmount > 0 && (
+                <> Includes {formatPKR(totals.taxAmount)} sales tax (internal, never shown to the
+                client).</>
+              )}
+            </p>
 
             {lines
               .filter((l) => l.category === "catering" && menus[l.serviceId])
@@ -763,42 +806,6 @@ export function BookingWizard({
 
         {step === 2 && (
           <div className="flex flex-col gap-4">
-            <h2 className="font-semibold">Hall Rent</h2>
-            <div className="flex flex-col gap-2 rounded-md border p-3">
-              <Field label="Hall rent (Rs)">
-                <Input
-                  type="number"
-                  min={0}
-                  className="w-40"
-                  value={hallRentRupees}
-                  onChange={(e) => setHallRentRupees(e.target.value)}
-                />
-              </Field>
-              <p className="text-xs text-muted-foreground">
-                Quoted inclusive of sales tax. This is the only amount tax is charged on —
-                catering, decor and other services are not taxed.
-              </p>
-              {totals.taxAmount > 0 && (
-                <div className="rounded-md bg-muted/50 p-2 text-sm">
-                  <p className="mb-1 text-xs font-medium uppercase text-muted-foreground">
-                    Internal — not shown to the client
-                  </p>
-                  {totals.taxLines.map((t) => (
-                    <div key={t.id} className="flex justify-between">
-                      <span className="text-muted-foreground">
-                        {t.name} {(t.rateBps / 100).toFixed(2)}% (included)
-                      </span>
-                      <span>{formatPKR(t.amount)}</span>
-                    </div>
-                  ))}
-                  <div className="flex justify-between font-medium">
-                    <span>Rent net of tax</span>
-                    <span>{formatPKR(hallRentPaisa - totals.taxAmount)}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
             <h2 className="font-semibold">Extras</h2>
             <Table>
               <TableHeader>

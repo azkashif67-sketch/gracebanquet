@@ -1,7 +1,8 @@
 import "server-only";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { db } from "../index";
 import { menuItems, services } from "../schema";
+import type { Transaction } from "../../calculations";
 
 export async function listServices() {
   return db
@@ -13,10 +14,13 @@ export async function listServices() {
       rate: services.rate,
       taxable: services.taxable,
       active: services.active,
+      isSystem: services.isSystem,
     })
     .from(services)
     .where(isNull(services.deletedAt))
-    .orderBy(asc(services.category), asc(services.name));
+    // System services (Hall Rent) sort first — it's the first line of every
+    // booking, so it belongs at the top of the catalogue too.
+    .orderBy(desc(services.isSystem), asc(services.category), asc(services.name));
 }
 
 export type PricingType = "fixed" | "per_head" | "per_hour" | "per_unit";
@@ -30,8 +34,14 @@ export interface ActiveService {
   taxable: number;
 }
 
-export async function listActiveServices(): Promise<ActiveService[]> {
-  const rows = await db
+// Services offered in the booking wizard's picker. System services are
+// deliberately excluded: Hall Rent is already the pinned first line, fed by
+// bookings.hall_rent, so offering it here would let it be added a second time
+// and counted twice in the subtotal.
+export async function listActiveServices(
+  handle: Transaction | typeof db = db,
+): Promise<ActiveService[]> {
+  const rows = await handle
     .select({
       id: services.id,
       name: services.name,
@@ -41,10 +51,27 @@ export async function listActiveServices(): Promise<ActiveService[]> {
       taxable: services.taxable,
     })
     .from(services)
-    .where(and(eq(services.active, 1), isNull(services.deletedAt)))
+    .where(
+      and(eq(services.active, 1), eq(services.isSystem, 0), isNull(services.deletedAt)),
+    )
     .orderBy(asc(services.category), asc(services.name));
 
   return rows as ActiveService[];
+}
+
+// The venue-rental service, whose rate is the default hall rent on a new
+// booking. Returns null if it's missing so callers degrade to "no default"
+// rather than breaking.
+export async function getHallRentService(): Promise<{ name: string; rate: number } | null> {
+  const row = await db
+    .select({ name: services.name, rate: services.rate })
+    .from(services)
+    .where(
+      and(eq(services.isSystem, 1), eq(services.active, 1), isNull(services.deletedAt)),
+    )
+    .limit(1);
+
+  return row[0] ?? null;
 }
 
 export async function getCateringMenuByService(): Promise<

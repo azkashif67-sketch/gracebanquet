@@ -7,12 +7,28 @@ export interface SeedServiceInput {
   category: string;
   pricingType: "fixed" | "per_head" | "per_hour" | "per_unit";
   ratePaisa: number;
+  /** System services configure the venue rather than being picked per booking. */
+  isSystem?: boolean;
   menuItems?: { name: string; type: string }[];
 }
 
 const rs = (rupees: number) => rupees * 100;
 
+/** The venue-rental service. Its rate is the default hall rent on a new booking. */
+export const HALL_RENT_SERVICE_NAME = "Hall Rent";
+export const HALL_RENT_SERVICE_CATEGORY = "venue";
+
 export const SEED_SERVICES: SeedServiceInput[] = [
+  {
+    // First in the list because it is the first line of every booking. Rate is
+    // a starting point — the venue edits it under Services, and it stays
+    // editable per booking for negotiated deals.
+    name: HALL_RENT_SERVICE_NAME,
+    category: HALL_RENT_SERVICE_CATEGORY,
+    pricingType: "fixed",
+    ratePaisa: rs(100000),
+    isSystem: true,
+  },
   {
     name: "Catering (per head)",
     category: "catering",

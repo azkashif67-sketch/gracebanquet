@@ -29,6 +29,7 @@ export async function seedInitialData(tx: Transaction, opts: SeedOptions = {}): 
       rate: svc.ratePaisa,
       taxable: 1,
       active: 1,
+      isSystem: svc.isSystem ? 1 : 0,
       createdAt: now(),
     });
 

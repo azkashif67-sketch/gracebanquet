@@ -1,0 +1,1 @@
+ALTER TABLE `services` ADD `is_system` integer DEFAULT 0 NOT NULL;

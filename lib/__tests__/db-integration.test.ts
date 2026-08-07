@@ -5,6 +5,8 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as schema from "../db/schema";
 import { checkAvailability, nextInvoiceNo, nextReceiptNo } from "../db/operations";
+import { listActiveServices } from "../db/queries/services";
+import { eq } from "drizzle-orm";
 
 // Self-contained integration DB, isolated from the dev file (./local.db) so
 // these tests never pollute data used for manual E2E verification.
@@ -253,5 +255,51 @@ describe("checkAvailability", () => {
       testDb,
     );
     expect(result.available).toBe(true);
+  });
+});
+
+describe("service catalogue", () => {
+  // Hall Rent is already the pinned first line of every booking, priced from
+  // bookings.hall_rent. If it also appeared in the wizard's picker it could be
+  // added as an ordinary line and counted a second time in the subtotal — so
+  // the exclusion below is a money-correctness guard, not cosmetics.
+  it("keeps system services out of the booking wizard's picker", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await testDb.insert(schema.services).values([
+      {
+        id: "svc-hall-rent",
+        name: "Hall Rent",
+        category: "venue",
+        pricingType: "fixed",
+        rate: 10000000,
+        taxable: 1,
+        active: 1,
+        isSystem: 1,
+        createdAt: now,
+      },
+      {
+        id: "svc-sound",
+        name: "Basic Sound System",
+        category: "sound",
+        pricingType: "fixed",
+        rate: 2500000,
+        taxable: 1,
+        active: 1,
+        isSystem: 0,
+        createdAt: now,
+      },
+    ]);
+
+    const offered = await listActiveServices(testDb);
+    expect(offered.map((s) => s.id)).toEqual(["svc-sound"]);
+  });
+
+  it("still exposes the system service as the hall-rent default", async () => {
+    const row = await testDb
+      .select({ name: schema.services.name, rate: schema.services.rate })
+      .from(schema.services)
+      .where(eq(schema.services.isSystem, 1));
+
+    expect(row).toEqual([{ name: "Hall Rent", rate: 10000000 }]);
   });
 });
