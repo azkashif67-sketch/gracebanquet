@@ -149,3 +149,32 @@ export async function closeInquiry(id: string, reason: string): Promise<ActionRe
   revalidatePath("/inquiries");
   return {};
 }
+
+// Soft delete, matching how expenses and services are removed — the row stays
+// in the database but drops out of every list and count. Closing an inquiry
+// records *why* a lead went nowhere and is the better option for real leads;
+// this is for mistakes and junk entries.
+export async function deleteInquiry(id: string): Promise<ActionResult> {
+  const user = await requireRole("admin", "manager");
+
+  const before = await db.query.inquiries.findFirst({ where: eq(inquiries.id, id) });
+  if (!before || before.deletedAt) return { error: "Inquiry not found." };
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(inquiries)
+      .set({ deletedAt: Math.floor(Date.now() / 1000) })
+      .where(eq(inquiries.id, id));
+    await audit(tx, {
+      userId: user.id,
+      action: "delete",
+      module: "inquiry",
+      recordId: id,
+      summary: `Deleted inquiry from ${before.name}`,
+    });
+  });
+
+  revalidatePath("/inquiries");
+  revalidatePath("/dashboard");
+  return {};
+}

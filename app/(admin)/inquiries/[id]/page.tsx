@@ -8,6 +8,7 @@ import { checkAvailability } from "@/lib/db/operations";
 import { db } from "@/lib/db";
 import { inquiries } from "@/lib/db/schema";
 import { Badge } from "@/components/ui/badge";
+import { DeleteInquiryButton } from "@/components/inquiries/delete-inquiry-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -56,15 +57,20 @@ export default async function InquiryDetailPage({
           <h1 className="text-2xl font-semibold">{inquiry.name}</h1>
           <Badge className="capitalize">{inquiry.status}</Badge>
         </div>
-        {canConvert && canAct && (
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              render={<Link href={`/quotations/new?fromInquiryId=${id}`}>Convert to Quotation</Link>}
-            />
-            <Button render={<Link href={`/bookings/new?fromInquiryId=${id}`}>Convert to Booking</Link>} />
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {canConvert && canAct && (
+            <>
+              <Button
+                variant="outline"
+                render={<Link href={`/quotations/new?fromInquiryId=${id}`}>Convert to Quotation</Link>}
+              />
+              <Button render={<Link href={`/bookings/new?fromInquiryId=${id}`}>Convert to Booking</Link>} />
+            </>
+          )}
+          {canConvert && (
+            <DeleteInquiryButton id={id} name={inquiry.name} redirectTo="/inquiries" />
+          )}
+        </div>
       </div>
 
       <Card>

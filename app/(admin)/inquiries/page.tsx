@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { DeleteInquiryButton } from "@/components/inquiries/delete-inquiry-button";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive"> = {
   new: "default",
@@ -25,9 +26,12 @@ export default async function InquiriesPage({
 }: {
   searchParams: Promise<{ status?: string }>;
 }) {
-  await requireAuth();
+  const user = await requireAuth();
   const params = await searchParams;
   const rows = await listInquiries({ status: params.status });
+
+  // Staff log and follow up on leads but don't remove them.
+  const canDelete = user.role === "admin" || user.role === "manager";
 
   return (
     <div className="flex flex-col gap-4">
@@ -45,6 +49,7 @@ export default async function InquiriesPage({
             <TableHead>Preferred Date</TableHead>
             <TableHead>Est. Guests</TableHead>
             <TableHead>Status</TableHead>
+            {canDelete && <TableHead className="text-right">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -64,11 +69,18 @@ export default async function InquiriesPage({
                   {r.status}
                 </Badge>
               </TableCell>
+              {canDelete && (
+                <TableCell>
+                  <div className="flex justify-end">
+                    <DeleteInquiryButton id={r.id} name={r.name} />
+                  </div>
+                </TableCell>
+              )}
             </TableRow>
           ))}
           {rows.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground">
+              <TableCell colSpan={canDelete ? 7 : 6} className="text-center text-muted-foreground">
                 No inquiries yet.
               </TableCell>
             </TableRow>
